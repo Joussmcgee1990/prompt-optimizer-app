@@ -6,8 +6,8 @@ import { motion } from "framer-motion";
 
 const steps = [
   { label: "Setup", path: "setup", icon: "01" },
-  { label: "Documents", path: "documents", icon: "02" },
-  { label: "Evaluate", path: "evaluate", icon: "03" },
+  { label: "Knowledge", path: "knowledge-base", icon: "02" },
+  { label: "Pre-flight", path: "evaluate", icon: "03" },
   { label: "Optimize", path: "optimize", icon: "04" },
 ];
 
@@ -17,7 +17,7 @@ export default function WizardStepper({ projectId }: { projectId: string }) {
 
   return (
     <div className="w-full mb-10">
-      <div className="flex items-center justify-between max-w-2xl mx-auto">
+      <div className="flex items-center justify-between max-w-3xl mx-auto">
         {steps.map((step, i) => {
           const isActive = i === currentStep;
           const isComplete = i < currentStep;

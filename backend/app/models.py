@@ -1,4 +1,4 @@
-"""Pydantic models for the Prompt Optimizer API."""
+"""Pydantic models for the Prompt Builder & Optimizer API."""
 
 from datetime import datetime
 from typing import List, Optional
@@ -37,6 +37,9 @@ class Project(BaseModel):
     prompt_template: str
     kb_status: str = "empty"  # empty | loading | ready
     kb_doc_count: int = 0
+    kb_build_status: str = "none"  # none | building | built | aligned
+    goal_answers: str = ""  # JSON string of goal Q&A
+    goal_definition: str = ""  # Markdown goal definition doc
     created_at: str = ""
     updated_at: str = ""
 
@@ -101,3 +104,46 @@ class DocumentInfo(BaseModel):
     filename: str
     size: int
     uploaded_at: str
+
+
+# --- Knowledge Base Builder ---
+
+class KBBuildRequest(BaseModel):
+    urls: List[str] = Field(default_factory=list)
+    user_notes: str = Field("", max_length=50000)
+    mode: str = "auto"  # url | notes | hybrid | auto
+
+
+class KBFile(BaseModel):
+    filename: str
+    label: str
+    size: int
+    step: int
+
+
+class AlignmentQuestion(BaseModel):
+    question: str
+    target_file: str
+
+
+class AlignmentAnswer(BaseModel):
+    question: str
+    target_file: str
+    answer: bool  # True = YES, False = NO
+    correction: str = ""  # user correction if NO
+
+
+class AlignmentRequest(BaseModel):
+    answers: List[AlignmentAnswer]
+
+
+class KBBuild(BaseModel):
+    id: str
+    project_id: str
+    mode: str
+    urls: List[str] = Field(default_factory=list)
+    user_notes: str = ""
+    slug: str = ""
+    status: str = "pending"  # pending | building | built | aligned
+    file_count: int = 0
+    created_at: str = ""

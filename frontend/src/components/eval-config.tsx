@@ -84,7 +84,7 @@ export default function EvalConfig({ items, onChange, disabled = false }: EvalCo
                 <span className="text-xs font-semibold text-accent bg-accent/10 px-2 py-1 rounded-md">
                   Q{i + 1}
                 </span>
-                <span className="text-sm text-white truncate max-w-md">
+                <span className="text-sm text-white">
                   {item.question || "New question..."}
                 </span>
               </div>

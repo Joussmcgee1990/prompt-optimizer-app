@@ -1,5 +1,6 @@
 """Optimization endpoints with SSE streaming."""
 
+import asyncio
 import json
 from functools import partial
 
@@ -33,11 +34,33 @@ async def stream_optimization(project_id: str):
     run_id = db.save_optimization_run(project_id, project.prompt_template)
 
     async def event_generator():
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def _run_sync():
+            """Run the blocking optimization in a thread, push events to queue."""
+            try:
+                for event in optimizer.run_optimization(
+                    query_fn, project.prompt_template, items_as_dicts
+                ):
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
+            except Exception as e:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "error", "message": str(e)},
+                )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        loop.run_in_executor(None, _run_sync)
+
         final_event = None
-        for event in optimizer.run_optimization(
-            query_fn, project.prompt_template, items_as_dicts
-        ):
-            yield {"event": event["type"], "data": json.dumps(event)}
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            event_type = "stream_error" if event["type"] == "error" else event["type"]
+            yield {"event": event_type, "data": json.dumps(event)}
             final_event = event
 
         # Save final state
@@ -49,7 +72,6 @@ async def stream_optimization(project_id: str):
                 iterations=final_event["iterations"],
                 status="completed" if final_event["type"] == "complete" else "max_retries",
             )
-            # Update project's prompt template to the optimized one
             db.update_project(project_id, prompt_template=final_event["final_prompt"])
 
     return EventSourceResponse(event_generator())

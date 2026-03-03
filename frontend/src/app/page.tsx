@@ -62,7 +62,7 @@ export default function LandingPage() {
               </svg>
             </div>
             <span className="font-semibold text-white tracking-wide">
-              Prompt Optimizer
+              Prompt Builder &amp; Optimizer
             </span>
           </Link>
           <Link

@@ -15,7 +15,7 @@ const markazi = Markazi_Text({
 });
 
 export const metadata: Metadata = {
-  title: "Prompt Optimizer | VYZN",
+  title: "Prompt Builder & Optimizer | VYZN",
   description: "Auto-tune your RAG prompts with AI-powered evaluation and optimization",
 };
 

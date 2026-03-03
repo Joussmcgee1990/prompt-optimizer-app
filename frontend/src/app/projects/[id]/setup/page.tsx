@@ -3,21 +3,24 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { getProject, updateProject, type Project } from "@/lib/api";
+import { getProject, updateProject, generatePromptTemplate, type Project } from "@/lib/api";
 import PromptEditor from "@/components/prompt-editor";
+import ModelBadge from "@/components/model-badge";
 
-const DEFAULT_PROMPT = `You are a helpful assistant for {company_name}. Use the following context to answer the user's question accurately and thoroughly.
+const DEFAULT_PROMPT = `You are a knowledgeable advisor for {company_name}. Your role is to provide accurate, helpful answers based strictly on the provided reference material.
 
-Context:
+Context from knowledge base:
 {context}
 
-Question: {question}
+User's question:
+{question}
 
 Instructions:
-- Only use information from the provided context
-- If the context doesn't contain enough information, say so
-- Be specific and reference details from the context
-- Keep your answer concise but complete`;
+- Answer ONLY using information from the context above
+- Be specific — cite details, names, numbers, and dates from the source material
+- If the context doesn't contain enough information to fully answer, clearly state what's missing
+- Structure your response with clear paragraphs for readability
+- Keep your tone professional but approachable`;
 
 export default function SetupPage() {
   const params = useParams();
@@ -31,6 +34,7 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [generatingPrompt, setGeneratingPrompt] = useState(false);
 
   useEffect(() => {
     loadProject();
@@ -82,6 +86,19 @@ export default function SetupPage() {
     }
   }
 
+  async function handleGeneratePrompt() {
+    if (!description.trim()) return;
+    setGeneratingPrompt(true);
+    try {
+      const result = await generatePromptTemplate(projectId, name.trim(), description.trim());
+      setPromptTemplate(result.prompt_template);
+    } catch (err) {
+      console.error("Failed to generate prompt:", err);
+    } finally {
+      setGeneratingPrompt(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -99,7 +116,7 @@ export default function SetupPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">Project Setup</h1>
         <p className="text-sm text-muted mt-1">
-          Configure your project details and initial prompt template.
+          Tell us about your project so we can tailor the prompt optimization to your needs.
         </p>
       </div>
 
@@ -113,32 +130,73 @@ export default function SetupPage() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. My Company RAG Bot"
+            placeholder="e.g. Acme Corp Customer Support Bot"
             className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-muted/50 focus:outline-none focus:border-accent transition-colors"
           />
+          <p className="text-xs text-muted/60 mt-1.5">
+            A short, descriptive name for this optimization project.
+          </p>
         </div>
 
         {/* Description */}
         <div>
           <label className="text-xs font-medium text-muted uppercase tracking-wider mb-1.5 block">
-            Description
+            What does this project do?
           </label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Brief description of what this project is about..."
-            rows={3}
+            placeholder={"Describe what your AI assistant should know and do.\n\nExample: \"A customer support chatbot for Acme Corp that answers questions about our SaaS product pricing, features, onboarding process, and troubleshooting guides.\""}
+            rows={4}
             className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-muted/50 focus:outline-none focus:border-accent transition-colors resize-none"
           />
+          <p className="text-xs text-muted/60 mt-1.5">
+            This description helps generate better evaluation questions and optimize your prompt more effectively.
+          </p>
         </div>
 
         {/* Prompt Template */}
-        <PromptEditor
-          value={promptTemplate}
-          onChange={setPromptTemplate}
-          label="Prompt Template"
-          description="This template is used when querying your knowledge base. Use {context} and {question} as placeholders."
-        />
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center">
+                <svg className="w-3 h-3 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <span className="text-xs text-muted">
+                Auto-generate a tailored prompt from your description, or customize the default.
+              </span>
+            </div>
+            <motion.button
+              onClick={handleGeneratePrompt}
+              disabled={generatingPrompt || !description.trim()}
+              className="px-4 py-1.5 text-xs text-accent border border-accent/30 rounded-lg hover:bg-accent/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0"
+              whileTap={{ scale: 0.95 }}
+            >
+              {generatingPrompt ? (
+                <>
+                  <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Auto-Generate Prompt
+                </>
+              )}
+            </motion.button>
+            <ModelBadge model="sonnet" />
+          </div>
+          <PromptEditor
+            value={promptTemplate}
+            onChange={setPromptTemplate}
+            label="Prompt Template"
+            description="This is the instruction template sent to Claude when answering questions. Use {context} for retrieved documents and {question} for the user's query."
+          />
+        </div>
       </div>
 
       {/* Actions */}

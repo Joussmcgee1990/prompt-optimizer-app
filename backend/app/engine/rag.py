@@ -1,19 +1,13 @@
-"""RAG engine — parameterized per-project (no module globals)."""
+"""RAG engine — parameterized per-project (no module globals).
+
+Uses Sonnet 4.6 for query rephrasing, Opus 4.6 for RAG answer generation.
+"""
 
 import os
 from pathlib import Path
 
-import anthropic
-import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-from llama_index.core import VectorStoreIndex, Settings, StorageContext, SimpleDirectoryReader
-from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from dotenv import load_dotenv
-
-load_dotenv()
-
-PROJECTS_DIR = Path(__file__).parent.parent.parent / "projects"
+_DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent.parent.parent)))
+PROJECTS_DIR = _DATA_DIR / "projects"
 
 # Shared singleton clients
 _anthropic_client = None
@@ -23,6 +17,9 @@ _embedding_function = None
 def _get_anthropic_client():
     global _anthropic_client
     if _anthropic_client is None:
+        import anthropic
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
         _anthropic_client = anthropic.Anthropic()
     return _anthropic_client
 
@@ -30,6 +27,7 @@ def _get_anthropic_client():
 def _get_embedding_function():
     global _embedding_function
     if _embedding_function is None:
+        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
         _embedding_function = SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
@@ -46,6 +44,7 @@ def _project_data_path(project_id: str) -> str:
 
 def _get_collection(project_id: str, collection_name: str):
     """Get or create a ChromaDB collection for a project."""
+    import chromadb
     db_path = _project_db_path(project_id)
     os.makedirs(db_path, exist_ok=True)
     client = chromadb.PersistentClient(path=db_path)
@@ -55,10 +54,11 @@ def _get_collection(project_id: str, collection_name: str):
 
 
 def rephrase_as_query(question: str) -> str:
-    """Use Claude to rephrase a question into a concise vector DB query."""
+    """Use Claude Sonnet to rephrase a question into a concise vector DB query."""
+    from .models import MODEL_GENERATE
     client = _get_anthropic_client()
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=MODEL_GENERATE,
         max_tokens=50,
         messages=[
             {
@@ -79,6 +79,8 @@ def query_rag(project_id: str, collection_name: str, prompt_template: str, quest
     if collection.count() == 0:
         return "No documents loaded in the knowledge base. Please upload documents first."
 
+    from .models import MODEL_RAG_ANSWER
+
     results = collection.query(
         query_texts=[rephrase_as_query(question)], n_results=5
     )
@@ -86,7 +88,7 @@ def query_rag(project_id: str, collection_name: str, prompt_template: str, quest
     concatenated_docs = "\n\n".join(results["documents"][0])
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=MODEL_RAG_ANSWER,
         max_tokens=1024,
         messages=[
             {
@@ -101,19 +103,38 @@ def query_rag(project_id: str, collection_name: str, prompt_template: str, quest
 
 
 def load_data(project_id: str, collection_name: str) -> int:
-    """Load documents from project's data directory into ChromaDB. Returns doc count."""
+    """Load documents from project's data directory AND KB files from DB into ChromaDB. Returns doc count."""
+    from .. import database as db
+
+    from llama_index.core import VectorStoreIndex, Settings, StorageContext, SimpleDirectoryReader, Document
+    from llama_index.vector_stores.chroma import ChromaVectorStore
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
     Settings.embed_model = HuggingFaceEmbedding(model_name="all-MiniLM-L6-v2")
 
-    data_path = _project_data_path(project_id)
-    if not os.path.exists(data_path):
-        raise FileNotFoundError(f"No data directory for project {project_id}")
+    docs = []
 
-    reader = SimpleDirectoryReader(
-        input_dir=data_path,
-        required_exts=[".md", ".txt", ".pdf"],
-        recursive=True,
-    )
-    docs = reader.load_data()
+    # 1. Load filesystem documents (uploaded files)
+    data_path = _project_data_path(project_id)
+    if os.path.exists(data_path):
+        try:
+            reader = SimpleDirectoryReader(
+                input_dir=data_path,
+                required_exts=[".md", ".txt", ".pdf"],
+                recursive=True,
+            )
+            docs.extend(reader.load_data())
+        except ValueError:
+            pass  # No files matching extensions
+
+    # 2. Load KB files from database
+    kb_files = db.get_all_kb_file_contents(project_id)
+    for kf in kb_files:
+        if kf["content"].strip():
+            docs.append(Document(
+                text=kf["content"],
+                metadata={"filename": kf["filename"], "source": "knowledge_base"},
+            ))
 
     if not docs:
         return 0
@@ -129,6 +150,7 @@ def load_data(project_id: str, collection_name: str) -> int:
 
 def clear_collection(project_id: str, collection_name: str):
     """Delete and recreate a project's collection."""
+    import chromadb
     db_path = _project_db_path(project_id)
     if os.path.exists(db_path):
         client = chromadb.PersistentClient(path=db_path)

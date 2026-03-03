@@ -1,4 +1,7 @@
-"""Evaluation engine — parameterized per-project."""
+"""Evaluation engine — parameterized per-project.
+
+Uses Opus 4.6 for fact evaluation (most accurate judgement model).
+"""
 
 from typing import List, Dict, Callable, Generator
 
@@ -6,7 +9,9 @@ import anthropic
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-load_dotenv()
+from .models import MODEL_EVAL
+
+load_dotenv(override=True)
 
 _client = None
 
@@ -14,14 +19,14 @@ _client = None
 def _get_client():
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        _client = anthropic.Anthropic(timeout=120.0)
     return _client
 
 
 class FactEvaluation(BaseModel):
     fact: str
     passed: bool
-    reason: str
+    reason: str = ""
 
 
 class ResponseEvaluation(BaseModel):
@@ -48,7 +53,7 @@ def evaluate_single_fact(question: str, response: str, fact: str) -> FactEvaluat
     ]
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=MODEL_EVAL,
         max_tokens=256,
         tools=tools,
         tool_choice={"type": "tool", "name": "record_evaluation"},
@@ -154,7 +159,19 @@ def evaluate_streaming(
     total = len(eval_items)
 
     for i, item in enumerate(eval_items):
-        result = process_single_question(query_fn, prompt_template, item)
+        try:
+            result = process_single_question(query_fn, prompt_template, item)
+        except Exception as e:
+            # If one question fails, score it 0 and continue with the rest
+            result = {
+                "question": item["question"],
+                "response": f"Error: {str(e)}",
+                "score": 0.0,
+                "fact_evaluations": [
+                    {"fact": f, "passed": False, "reason": f"Evaluation error: {str(e)}"}
+                    for f in item["required_facts"]
+                ],
+            }
         evaluated_responses.append(result)
 
         for ev in result["fact_evaluations"]:
