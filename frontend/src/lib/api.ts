@@ -125,6 +125,8 @@ export async function generatePromptTemplate(
 export interface GoalQuestion {
   id: string;
   question: string;
+  hint?: string;
+  category?: string;
 }
 
 export interface GoalAnswer {
