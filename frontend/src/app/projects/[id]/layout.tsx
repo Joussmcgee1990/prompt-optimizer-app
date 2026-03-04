@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import WizardStepper from "@/components/wizard-stepper";
@@ -11,6 +12,11 @@ export default function ProjectLayout({
 }) {
   const params = useParams();
   const projectId = params.id as string;
+  const [isEmbedded, setIsEmbedded] = useState(false);
+
+  useEffect(() => {
+    setIsEmbedded(window.self !== window.top);
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -27,12 +33,14 @@ export default function ProjectLayout({
               Prompt Builder &amp; Optimizer
             </span>
           </Link>
-          <Link
-            href="/projects"
-            className="text-sm text-muted hover:text-white transition-colors"
-          >
-            All Projects
-          </Link>
+          {!isEmbedded && (
+            <Link
+              href="/projects"
+              className="text-sm text-muted hover:text-white transition-colors"
+            >
+              All Projects
+            </Link>
+          )}
         </div>
       </nav>
 

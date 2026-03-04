@@ -14,9 +14,18 @@ export default function ProjectsPage() {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [creating, setCreating] = useState(false);
+  const [isEmbedded, setIsEmbedded] = useState(false);
 
   useEffect(() => {
-    loadProjects();
+    // Detect if running inside an iframe (embedded on vyzn.ai)
+    const embedded = window.self !== window.top;
+    setIsEmbedded(embedded);
+    if (!embedded) {
+      loadProjects();
+    } else {
+      // In iframe mode, don't load existing projects — show empty state
+      setLoading(false);
+    }
   }, []);
 
   async function loadProjects() {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 
@@ -50,6 +51,12 @@ const item = {
 };
 
 export default function LandingPage() {
+  const [isEmbedded, setIsEmbedded] = useState(false);
+
+  useEffect(() => {
+    setIsEmbedded(window.self !== window.top);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Navbar */}
@@ -65,12 +72,14 @@ export default function LandingPage() {
               Prompt Builder &amp; Optimizer
             </span>
           </Link>
-          <Link
-            href="/projects"
-            className="text-sm text-muted hover:text-white transition-colors"
-          >
-            My Projects
-          </Link>
+          {!isEmbedded && (
+            <Link
+              href="/projects"
+              className="text-sm text-muted hover:text-white transition-colors"
+            >
+              My Projects
+            </Link>
+          )}
         </div>
       </nav>
 
