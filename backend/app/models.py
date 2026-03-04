@@ -40,6 +40,7 @@ class Project(BaseModel):
     kb_build_status: str = "none"  # none | building | built | aligned
     goal_answers: str = ""  # JSON string of goal Q&A
     goal_definition: str = ""  # Markdown goal definition doc
+    session_id: str = ""
     created_at: str = ""
     updated_at: str = ""
 

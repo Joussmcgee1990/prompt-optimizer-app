@@ -3,7 +3,7 @@
 import json
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from ..models import ProjectCreate, ProjectUpdate, Project
 from .. import database as db
@@ -13,13 +13,13 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
 @router.post("", response_model=Project)
-def create_project(body: ProjectCreate):
-    return db.create_project(body.name, body.description, body.prompt_template)
+def create_project(body: ProjectCreate, x_session_id: str = Header("")):
+    return db.create_project(body.name, body.description, body.prompt_template, session_id=x_session_id)
 
 
 @router.get("", response_model=list[Project])
-def list_projects():
-    return db.list_projects()
+def list_projects(x_session_id: str = Header("")):
+    return db.list_projects(session_id=x_session_id)
 
 
 @router.get("/{project_id}", response_model=Project)

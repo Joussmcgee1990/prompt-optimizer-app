@@ -1,6 +1,23 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api";
 
+// ── Session ────────────────────────────────────────────────────
+
+function getSessionId(): string {
+  if (typeof window === "undefined") return "";
+  let id = localStorage.getItem("pbo_session_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("pbo_session_id", id);
+  }
+  return id;
+}
+
+function sessionHeaders(): Record<string, string> {
+  const sid = getSessionId();
+  return sid ? { "X-Session-ID": sid } : {};
+}
+
 // ── Types ──────────────────────────────────────────────────────
 
 export interface Project {
@@ -69,7 +86,7 @@ export async function createProject(data: {
 }): Promise<Project> {
   const res = await fetch(`${API_BASE}/projects`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -77,13 +94,17 @@ export async function createProject(data: {
 }
 
 export async function listProjects(): Promise<Project[]> {
-  const res = await fetch(`${API_BASE}/projects`);
+  const res = await fetch(`${API_BASE}/projects`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function getProject(id: string): Promise<Project> {
-  const res = await fetch(`${API_BASE}/projects/${id}`);
+  const res = await fetch(`${API_BASE}/projects/${id}`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -94,7 +115,7 @@ export async function updateProject(
 ): Promise<Project> {
   const res = await fetch(`${API_BASE}/projects/${id}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -112,7 +133,7 @@ export async function generatePromptTemplate(
     `${API_BASE}/projects/${projectId}/generate-prompt`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sessionHeaders() },
       body: JSON.stringify({ name: name || "", description: description || "" }),
     }
   );
@@ -140,7 +161,7 @@ export async function getGoalQuestions(
 ): Promise<{ questions: GoalQuestion[] }> {
   const res = await fetch(
     `${API_BASE}/projects/${projectId}/goal/questions`,
-    { method: "POST" }
+    { method: "POST", headers: { ...sessionHeaders() } }
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -152,7 +173,7 @@ export async function saveGoal(
 ): Promise<{ goal_definition: string; status: string }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/goal/save`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
     body: JSON.stringify({ answers }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -162,7 +183,9 @@ export async function saveGoal(
 export async function getGoal(
   projectId: string
 ): Promise<{ answers: GoalAnswer[]; goal_definition: string; has_goal: boolean }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/goal`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/goal`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -173,7 +196,7 @@ export async function updateGoal(
 ): Promise<{ goal_definition: string; status: string }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/goal`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
     body: JSON.stringify({ goal_definition: goalDefinition }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -187,6 +210,7 @@ export async function generateSystemDocs(
 ): Promise<{ system_docs: { filename: string; label: string; size: number }[]; count: number }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/kb/system-docs`, {
     method: "POST",
+    headers: { ...sessionHeaders() },
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -198,9 +222,9 @@ export function streamSystemDocs(
   onDone: () => void,
   onError: (err: Error) => void
 ): () => void {
-  const eventSource = new EventSource(
-    `${API_BASE}/projects/${projectId}/kb/system-docs/stream`
-  );
+  const sid = getSessionId();
+  const url = `${API_BASE}/projects/${projectId}/kb/system-docs/stream${sid ? `?session_id=${sid}` : ""}`;
+  const eventSource = new EventSource(url);
 
   const handleEvent = (e: MessageEvent) => {
     try {
@@ -240,6 +264,7 @@ export async function uploadDocuments(
   files.forEach((f) => formData.append("files", f));
   const res = await fetch(`${API_BASE}/projects/${projectId}/documents`, {
     method: "POST",
+    headers: { ...sessionHeaders() },
     body: formData,
   });
   if (!res.ok) throw new Error(await res.text());
@@ -249,7 +274,9 @@ export async function uploadDocuments(
 export async function listDocuments(
   projectId: string
 ): Promise<{ documents: DocumentInfo[]; count: number }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/documents`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/documents`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -260,7 +287,7 @@ export async function deleteDocument(
 ): Promise<void> {
   const res = await fetch(
     `${API_BASE}/projects/${projectId}/documents/${filename}`,
-    { method: "DELETE" }
+    { method: "DELETE", headers: { ...sessionHeaders() } }
   );
   if (!res.ok) throw new Error(await res.text());
 }
@@ -270,7 +297,7 @@ export async function loadData(
 ): Promise<{ status: string; message: string }> {
   const res = await fetch(
     `${API_BASE}/projects/${projectId}/documents/load-data`,
-    { method: "POST" }
+    { method: "POST", headers: { ...sessionHeaders() } }
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -284,7 +311,7 @@ export async function researchUrl(
     `${API_BASE}/projects/${projectId}/documents/research-url`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sessionHeaders() },
       body: JSON.stringify({ url }),
     }
   );
@@ -297,7 +324,8 @@ export async function getDocumentContent(
   filename: string
 ): Promise<{ filename: string; content: string }> {
   const res = await fetch(
-    `${API_BASE}/projects/${projectId}/documents/${encodeURIComponent(filename)}/content`
+    `${API_BASE}/projects/${projectId}/documents/${encodeURIComponent(filename)}/content`,
+    { headers: { ...sessionHeaders() } }
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -312,7 +340,7 @@ export async function updateDocumentContent(
     `${API_BASE}/projects/${projectId}/documents/${encodeURIComponent(filename)}/content`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sessionHeaders() },
       body: JSON.stringify({ content }),
     }
   );
@@ -328,7 +356,7 @@ export async function saveEvalItems(
 ): Promise<{ saved: number }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/eval-items`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
     body: JSON.stringify({ items }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -338,7 +366,9 @@ export async function saveEvalItems(
 export async function getEvalItems(
   projectId: string
 ): Promise<{ items: EvalItem[] }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/eval-items`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/eval-items`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -351,7 +381,7 @@ export async function autoGenerateEvalItems(
     `${API_BASE}/projects/${projectId}/eval-items/auto-generate`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sessionHeaders() },
       body: JSON.stringify({ num_questions: numQuestions }),
     }
   );
@@ -367,9 +397,9 @@ export function streamEvaluation(
   onDone: () => void,
   onError: (err: Error) => void
 ): () => void {
-  const eventSource = new EventSource(
-    `${API_BASE}/projects/${projectId}/evaluate/stream`
-  );
+  const sid = getSessionId();
+  const url = `${API_BASE}/projects/${projectId}/evaluate/stream${sid ? `?session_id=${sid}` : ""}`;
+  const eventSource = new EventSource(url);
 
   const handleEvent = (e: MessageEvent) => {
     try {
@@ -387,13 +417,8 @@ export function streamEvaluation(
   eventSource.addEventListener("progress", handleEvent);
   eventSource.addEventListener("result", handleEvent);
   eventSource.addEventListener("complete", handleEvent);
-  // Backend sends errors as "eval_error" to avoid conflicting with EventSource's
-  // built-in "error" event which kills the connection
   eventSource.addEventListener("eval_error", handleEvent);
-  // Connection-level errors only (not backend errors)
   eventSource.onerror = () => {
-    // EventSource fires onerror on connection close too — only treat as
-    // error if we haven't received a complete event (readyState CLOSED = 2)
     if (eventSource.readyState === EventSource.CLOSED) {
       onError(new Error("SSE connection error"));
     }
@@ -410,9 +435,9 @@ export function streamOptimization(
   onDone: () => void,
   onError: (err: Error) => void
 ): () => void {
-  const eventSource = new EventSource(
-    `${API_BASE}/projects/${projectId}/optimize/stream`
-  );
+  const sid = getSessionId();
+  const url = `${API_BASE}/projects/${projectId}/optimize/stream${sid ? `?session_id=${sid}` : ""}`;
+  const eventSource = new EventSource(url);
 
   const handleEvent = (e: MessageEvent) => {
     try {
@@ -477,7 +502,7 @@ export async function startKBBuild(
 ): Promise<{ build_id: string; slug: string; mode: string }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/kb/build`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -491,9 +516,9 @@ export function streamKBBuild(
   onDone: () => void,
   onError: (err: Error) => void
 ): () => void {
-  const eventSource = new EventSource(
-    `${API_BASE}/projects/${projectId}/kb/stream/${buildId}`
-  );
+  const sid = getSessionId();
+  const url = `${API_BASE}/projects/${projectId}/kb/stream/${buildId}${sid ? `?session_id=${sid}` : ""}`;
+  const eventSource = new EventSource(url);
 
   const handleEvent = (e: MessageEvent) => {
     try {
@@ -529,7 +554,9 @@ export function streamKBBuild(
 export async function listKBFiles(
   projectId: string
 ): Promise<{ files: KBFile[]; slug: string }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/kb/files`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/kb/files`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -539,7 +566,8 @@ export async function getKBFileContent(
   filename: string
 ): Promise<{ filename: string; content: string; slug: string }> {
   const res = await fetch(
-    `${API_BASE}/projects/${projectId}/kb/files/${encodeURIComponent(filename)}`
+    `${API_BASE}/projects/${projectId}/kb/files/${encodeURIComponent(filename)}`,
+    { headers: { ...sessionHeaders() } }
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -554,7 +582,7 @@ export async function updateKBFileContent(
     `${API_BASE}/projects/${projectId}/kb/files/${encodeURIComponent(filename)}`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sessionHeaders() },
       body: JSON.stringify({ content }),
     }
   );
@@ -565,7 +593,9 @@ export async function updateKBFileContent(
 export async function getKBAlignment(
   projectId: string
 ): Promise<{ questions: AlignmentQuestion[]; build_id: string | null; slug: string }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/kb/alignment`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/kb/alignment`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -576,7 +606,7 @@ export async function submitAlignment(
 ): Promise<{ results: Record<string, unknown>[]; all_resolved: boolean }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/kb/align`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
     body: JSON.stringify({ answers }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -586,7 +616,9 @@ export async function submitAlignment(
 export async function getKBStatus(
   projectId: string
 ): Promise<{ status: string; build: Record<string, unknown> | null }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/kb/status`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/kb/status`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -594,7 +626,9 @@ export async function getKBStatus(
 // ── Export ─────────────────────────────────────────────────────
 
 export async function exportProject(projectId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/export`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/export`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -615,7 +649,9 @@ export async function getHistory(projectId: string): Promise<{
   eval_runs: EvalRun[];
   optimization_runs: OptimizationRun[];
 }> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/history`);
+  const res = await fetch(`${API_BASE}/projects/${projectId}/history`, {
+    headers: { ...sessionHeaders() },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

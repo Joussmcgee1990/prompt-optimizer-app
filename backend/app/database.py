@@ -108,6 +108,7 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN kb_build_status TEXT DEFAULT 'none'",
         "ALTER TABLE projects ADD COLUMN goal_answers TEXT DEFAULT ''",
         "ALTER TABLE projects ADD COLUMN goal_definition TEXT DEFAULT ''",
+        "ALTER TABLE projects ADD COLUMN session_id TEXT DEFAULT ''",
     ]
     for sql in migrations:
         try:
@@ -125,25 +126,32 @@ def _now() -> str:
 
 # --- Projects ---
 
-def create_project(name: str, description: str, prompt_template: str) -> Project:
+def create_project(name: str, description: str, prompt_template: str, session_id: str = "") -> Project:
     conn = get_db()
     project_id = new_id()
     now = _now()
     conn.execute(
-        "INSERT INTO projects (id, name, description, prompt_template, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (project_id, name, description, prompt_template, now, now),
+        "INSERT INTO projects (id, name, description, prompt_template, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (project_id, name, description, prompt_template, session_id, now, now),
     )
     conn.commit()
     conn.close()
     return Project(
         id=project_id, name=name, description=description,
-        prompt_template=prompt_template, created_at=now, updated_at=now,
+        prompt_template=prompt_template, session_id=session_id,
+        created_at=now, updated_at=now,
     )
 
 
-def list_projects() -> List[Project]:
+def list_projects(session_id: str = "") -> List[Project]:
     conn = get_db()
-    rows = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+    if session_id:
+        rows = conn.execute(
+            "SELECT * FROM projects WHERE session_id = ? ORDER BY created_at DESC",
+            (session_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
     conn.close()
     return [Project(**dict(r)) for r in rows]
 
