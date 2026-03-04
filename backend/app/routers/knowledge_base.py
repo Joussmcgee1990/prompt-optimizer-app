@@ -337,6 +337,81 @@ def generate_system_documents(project_id: str):
     return {"system_docs": saved, "count": len(saved)}
 
 
+@router.get("/system-docs/stream")
+async def stream_system_docs_endpoint(project_id: str):
+    """SSE stream of system document generation progress."""
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    if not project.goal_definition:
+        raise HTTPException(400, "Goal definition required.")
+
+    build = db.get_latest_kb_build(project_id)
+    if not build:
+        raise HTTPException(400, "No KB build found.")
+
+    kb_files = db.get_all_kb_file_contents(project_id)
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def _run_sync():
+            try:
+                for event in system_docs.stream_system_docs(
+                    project_description=project.description,
+                    goal_definition=project.goal_definition,
+                    kb_files=kb_files,
+                ):
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
+            except Exception as e:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "error", "message": str(e)},
+                )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        loop.run_in_executor(None, _run_sync)
+
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+
+            if event["type"] == "sysdoc_file_complete" and "content" in event:
+                # Save to DB
+                existing = db.get_kb_file(project_id, event["filename"], build.id)
+                if existing:
+                    db.update_kb_file(project_id, event["filename"], event["content"], build.id)
+                else:
+                    db.save_kb_file(
+                        project_id=project_id,
+                        kb_build_id=build.id,
+                        filename=event["filename"],
+                        label=event.get("label", event["filename"]),
+                        content=event["content"],
+                    )
+                # Strip content from SSE payload
+                sse_event = {k: v for k, v in event.items() if k != "content"}
+                yield {"event": event["type"], "data": json.dumps(sse_event)}
+
+            elif event["type"] == "sysdoc_complete":
+                # Update file count
+                all_files = db.get_kb_files(project_id, build.id)
+                db.update_kb_build(build.id, file_count=len(all_files))
+                yield {"event": event["type"], "data": json.dumps(event)}
+
+            elif event["type"] == "error":
+                yield {"event": "stream_error", "data": json.dumps(event)}
+
+            else:
+                yield {"event": event["type"], "data": json.dumps(event)}
+
+    return EventSourceResponse(event_generator())
+
+
 # --- Status ---
 
 @router.get("/status")

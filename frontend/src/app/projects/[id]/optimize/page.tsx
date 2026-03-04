@@ -53,7 +53,17 @@ export default function OptimizePage() {
         getHistory(projectId),
       ]);
       setProject(p);
-      setHistory(h.optimization_runs || []);
+      const runs = h.optimization_runs || [];
+      setHistory(runs);
+
+      // Restore the latest completed optimization result
+      const latestCompleted = runs.find(
+        (r: OptimizationRun) => r.status === "completed" && r.final_prompt
+      );
+      if (latestCompleted && latestCompleted.final_prompt) {
+        setOptimizedPrompt(latestCompleted.final_prompt);
+        setFinalScore(latestCompleted.final_score);
+      }
     } catch (err) {
       console.error("Failed to load:", err);
     } finally {

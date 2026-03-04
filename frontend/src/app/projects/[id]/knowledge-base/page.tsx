@@ -7,6 +7,7 @@ import {
   getProject,
   startKBBuild,
   streamKBBuild,
+  streamSystemDocs,
   listKBFiles,
   getKBFileContent,
   updateKBFileContent,
@@ -95,6 +96,14 @@ export default function KnowledgePage() {
 
   // ── System Docs state ──
   const [generatingSystemDocs, setGeneratingSystemDocs] = useState(false);
+  const [sysDocLines, setSysDocLines] = useState<TerminalLine[]>([]);
+  const sysDocLineIdRef = useRef(0);
+  const [systemDocFiles, setSystemDocFiles] = useState<KBFile[]>([]);
+  const [selectedSysDoc, setSelectedSysDoc] = useState<string | null>(null);
+  const [sysDocContent, setSysDocContent] = useState("");
+  const [editingSysDoc, setEditingSysDoc] = useState(false);
+  const [savingSysDoc, setSavingSysDoc] = useState(false);
+  const sysDocCleanupRef = useRef<(() => void) | null>(null);
 
   // ── Uploads state ──
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
@@ -118,6 +127,7 @@ export default function KnowledgePage() {
     loadAll();
     return () => {
       if (cleanupRef.current) cleanupRef.current();
+      if (sysDocCleanupRef.current) sysDocCleanupRef.current();
     };
   }, [projectId]);
 
@@ -159,6 +169,8 @@ export default function KnowledgePage() {
         setKbOpen(false);
         setSystemDocsOpen(true);
         setUploadsOpen(true);
+        // Load system doc files for inline editor
+        await loadSystemDocFiles();
       }
     } catch (err) {
       console.error("Failed to load:", err);
@@ -408,17 +420,112 @@ export default function KnowledgePage() {
 
   // ── System Docs ──
 
-  async function handleGenerateSystemDocs() {
-    setGeneratingSystemDocs(true);
+  function addSysDocLine(text: string, type: TerminalLine["type"] = "info") {
+    const id = `sysline-${++sysDocLineIdRef.current}`;
+    setSysDocLines((prev) => [...prev, { id, text, type }]);
+  }
+
+  async function loadSystemDocFiles() {
     try {
-      await generateSystemDocs(projectId);
+      const { files } = await listKBFiles(projectId);
+      const sysDocs = files.filter((f) => f.filename.startsWith("_system_"));
+      setSystemDocFiles(sysDocs);
+    } catch (err) {
+      console.error("Failed to load system doc files:", err);
+    }
+  }
+
+  async function selectSysDoc(filename: string) {
+    setSelectedSysDoc(filename);
+    setEditingSysDoc(false);
+    try {
+      const { content } = await getKBFileContent(projectId, filename);
+      setSysDocContent(content);
+    } catch (err) {
+      console.error("Failed to load system doc:", err);
+    }
+  }
+
+  async function saveSysDoc() {
+    if (!selectedSysDoc) return;
+    setSavingSysDoc(true);
+    try {
+      await updateKBFileContent(projectId, selectedSysDoc, sysDocContent);
+      // Refresh file list to update sizes
+      await loadSystemDocFiles();
       await loadKBReviewData();
-      // Auto-build vector DB after system docs
+      // Reindex vector DB
       handleLoadKB();
     } catch (err) {
-      console.error("Failed to generate system docs:", err);
+      console.error("Failed to save system doc:", err);
     } finally {
-      setGeneratingSystemDocs(false);
+      setSavingSysDoc(false);
+      setEditingSysDoc(false);
+    }
+  }
+
+  function handleGenerateSystemDocs() {
+    setGeneratingSystemDocs(true);
+    setSysDocLines([]);
+    sysDocLineIdRef.current = 0;
+    setSystemDocFiles([]);
+    setSelectedSysDoc(null);
+    setSysDocContent("");
+
+    addSysDocLine("System Document Generator", "header");
+    addSysDocLine("Generating rubric, guidelines, and gap analysis...", "dim");
+    addSysDocLine("", "dim");
+
+    const cleanup = streamSystemDocs(
+      projectId,
+      (event) => handleSysDocEvent(event),
+      async () => {
+        setGeneratingSystemDocs(false);
+        await loadSystemDocFiles();
+        await loadKBReviewData();
+        // Auto-build vector DB
+        handleLoadKB();
+      },
+      (err) => {
+        addSysDocLine(`Connection error: ${err.message}`, "error");
+        setGeneratingSystemDocs(false);
+      }
+    );
+    sysDocCleanupRef.current = cleanup;
+  }
+
+  function handleSysDocEvent(event: Record<string, unknown>) {
+    switch (event.type) {
+      case "sysdoc_start":
+        addSysDocLine(`Generating ${event.total_files} system documents...`, "progress");
+        break;
+      case "sysdoc_file_start":
+        addSysDocLine("", "dim");
+        addSysDocLine(`[${event.step}/${event.total_steps}] Generating ${event.label}...`, "header");
+        break;
+      case "sysdoc_file_complete":
+        addSysDocLine(
+          `Wrote ${event.filename} (${((event.content_length as number) / 1024).toFixed(1)}KB)`,
+          "success"
+        );
+        break;
+      case "sysdoc_file_skip":
+        addSysDocLine(`Skipped ${event.filename}: ${event.reason}`, "dim");
+        break;
+      case "sysdoc_file_error":
+        addSysDocLine(`Failed to generate ${event.filename}: ${event.error}`, "error");
+        break;
+      case "sysdoc_complete":
+        addSysDocLine("", "dim");
+        addSysDocLine("═══════════════════════════════════", "header");
+        addSysDocLine(
+          `Complete! ${event.file_count} system documents generated (${((event.total_size as number) / 1024).toFixed(1)}KB)`,
+          "success"
+        );
+        break;
+      case "error":
+        addSysDocLine(`Error: ${event.message}`, "error");
+        break;
     }
   }
 
@@ -964,7 +1071,7 @@ export default function KnowledgePage() {
         subtitle={hasSystemDocs ? "Rubric & guidelines generated" : "Auto-generate rubric, guidelines, and gap analysis"}
         open={systemDocsOpen}
         onToggle={() => setSystemDocsOpen(!systemDocsOpen)}
-        badge={hasSystemDocs ? "complete" : undefined}
+        badge={hasSystemDocs ? "complete" : generatingSystemDocs ? "building" : undefined}
         disabled={kbPageState !== "review"}
       >
         <div className="space-y-4">
@@ -972,40 +1079,135 @@ export default function KnowledgePage() {
             Generate evaluation rubrics, response guidelines, and gap analysis based on your goal definition and KB content. These are loaded into the vector DB to improve response quality.
           </p>
 
-          {hasSystemDocs && (
-            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-[12px] p-3 flex items-center gap-2">
-              <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              <span className="text-xs text-emerald-300">
-                System documents generated. View them in the KB Files list above.
-              </span>
-            </div>
-          )}
-
-          <motion.button
-            onClick={handleGenerateSystemDocs}
-            disabled={generatingSystemDocs || !hasGoal}
-            className="px-6 py-2.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            {generatingSystemDocs ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Generating...
-              </>
-            ) : hasSystemDocs ? (
-              "Regenerate System Documents"
-            ) : (
-              "Generate System Documents"
-            )}
-          </motion.button>
+          {/* Generate / Regenerate button */}
+          <div className="flex items-center gap-3">
+            <motion.button
+              onClick={handleGenerateSystemDocs}
+              disabled={generatingSystemDocs || !hasGoal}
+              className="px-6 py-2.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              {generatingSystemDocs ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Generating...
+                </>
+              ) : hasSystemDocs ? (
+                "Regenerate System Documents"
+              ) : (
+                "Generate System Documents"
+              )}
+            </motion.button>
+            <ModelBadge model="sonnet" />
+          </div>
 
           {!hasGoal && (
             <p className="text-xs text-muted/60">
               Complete the Goal Refinement step first to generate system documents.
             </p>
+          )}
+
+          {/* Terminal output during generation */}
+          {sysDocLines.length > 0 && (
+            <TerminalOutput
+              lines={sysDocLines}
+              title={`system-docs — ${project?.name || "project"}`}
+              maxHeight="350px"
+            />
+          )}
+
+          {/* Inline file browser/editor for system docs */}
+          {systemDocFiles.length > 0 && !generatingSystemDocs && (
+            <div className="space-y-3">
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-[12px] p-3 flex items-center gap-2">
+                <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <span className="text-xs text-emerald-300">
+                  {systemDocFiles.length} system document{systemDocFiles.length !== 1 ? "s" : ""} generated. Click to review or edit.
+                </span>
+              </div>
+
+              <div className="grid grid-cols-12 gap-3">
+                {/* File list */}
+                <div className="col-span-4 bg-card-lighter rounded-[12px] border border-border overflow-hidden">
+                  <div className="p-3 border-b border-border">
+                    <h4 className="text-xs font-semibold text-white uppercase tracking-wider">System Files</h4>
+                  </div>
+                  <div className="p-1.5 max-h-[300px] overflow-y-auto">
+                    {systemDocFiles.map((file) => (
+                      <button
+                        key={file.filename}
+                        onClick={() => selectSysDoc(file.filename)}
+                        className={`w-full text-left px-2.5 py-2 rounded-[6px] text-xs transition-all ${
+                          selectedSysDoc === file.filename
+                            ? "bg-purple-500/20 text-purple-300"
+                            : "text-muted hover:text-white hover:bg-card"
+                        }`}
+                      >
+                        <div className="font-medium truncate">
+                          <span className="inline-block px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-[10px] mr-1.5">SYS</span>
+                          {file.label}
+                        </div>
+                        <div className="text-[10px] opacity-60 mt-0.5">
+                          {(file.size / 1024).toFixed(1)}KB
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Content viewer/editor */}
+                <div className="col-span-8 bg-card-lighter rounded-[12px] border border-border overflow-hidden">
+                  <div className="p-3 border-b border-border flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-white">{selectedSysDoc || "Select a file"}</h4>
+                    <div className="flex gap-1.5">
+                      {selectedSysDoc && (
+                        editingSysDoc ? (
+                          <>
+                            <button onClick={() => setEditingSysDoc(false)} className="px-2.5 py-1 text-[10px] text-muted hover:text-white border border-border rounded-[4px] transition-colors">
+                              Cancel
+                            </button>
+                            <button
+                              onClick={saveSysDoc}
+                              disabled={savingSysDoc}
+                              className="px-2.5 py-1 text-[10px] bg-accent text-white rounded-[4px] hover:bg-accent-hover transition-colors disabled:opacity-50"
+                            >
+                              {savingSysDoc ? "Saving..." : "Save"}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => setEditingSysDoc(true)}
+                            className="px-2.5 py-1 text-[10px] text-muted hover:text-white border border-border rounded-[4px] transition-colors"
+                          >
+                            Edit
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                  <div className="p-3 max-h-[300px] overflow-y-auto">
+                    {selectedSysDoc ? (
+                      editingSysDoc ? (
+                        <textarea
+                          value={sysDocContent}
+                          onChange={(e) => setSysDocContent(e.target.value)}
+                          className="w-full h-[250px] bg-card border border-border rounded-[6px] px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-colors resize-none"
+                        />
+                      ) : (
+                        <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-mono leading-relaxed">
+                          {sysDocContent}
+                        </pre>
+                      )
+                    ) : (
+                      <p className="text-xs text-muted text-center py-8">Select a system document to view</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </CollapsibleSection>

@@ -84,6 +84,98 @@ def generate_system_docs(
     return docs
 
 
+def stream_system_docs(
+    project_description: str,
+    goal_definition: str,
+    kb_files: List[Dict],
+):
+    """
+    Generator that yields SSE events while generating system documents.
+    Same logic as generate_system_docs() but with progress events.
+    """
+    client = _get_client()
+
+    # Build a summary of what's in the KB
+    kb_summary = ""
+    kb_full = ""
+    for f in kb_files:
+        if f["filename"] == "00_meta.json":
+            continue
+        kb_summary += f"- {f['filename']}: {f.get('content', '')[:200]}...\n"
+        kb_full += f"\n--- {f['filename']} ---\n{f.get('content', '')[:3000]}\n"
+
+    yield {"type": "sysdoc_start", "total_files": 3}
+
+    docs_to_generate = [
+        {
+            "step": 1,
+            "filename": "_system_evaluation_rubric.md",
+            "label": "Evaluation Rubric (System)",
+            "generator": lambda: _generate_rubric(client, project_description, goal_definition, kb_summary),
+        },
+        {
+            "step": 2,
+            "filename": "_system_response_guidelines.md",
+            "label": "Response Guidelines (System)",
+            "generator": lambda: _generate_guidelines(client, project_description, goal_definition, kb_summary),
+        },
+        {
+            "step": 3,
+            "filename": "_system_missing_context.md",
+            "label": "Missing Context (System)",
+            "generator": lambda: _generate_gap_analysis(client, project_description, goal_definition, kb_full) if kb_files else None,
+        },
+    ]
+
+    generated = []
+    for doc_info in docs_to_generate:
+        yield {
+            "type": "sysdoc_file_start",
+            "step": doc_info["step"],
+            "total_steps": 3,
+            "filename": doc_info["filename"],
+            "label": doc_info["label"],
+        }
+
+        try:
+            content = doc_info["generator"]()
+            if content:
+                generated.append({
+                    "filename": doc_info["filename"],
+                    "label": doc_info["label"],
+                    "content": content,
+                })
+                yield {
+                    "type": "sysdoc_file_complete",
+                    "step": doc_info["step"],
+                    "filename": doc_info["filename"],
+                    "label": doc_info["label"],
+                    "content": content,
+                    "content_length": len(content.encode("utf-8")),
+                }
+            else:
+                yield {
+                    "type": "sysdoc_file_skip",
+                    "step": doc_info["step"],
+                    "filename": doc_info["filename"],
+                    "label": doc_info["label"],
+                    "reason": "No significant gaps found" if doc_info["step"] == 3 else "No content generated",
+                }
+        except Exception as e:
+            yield {
+                "type": "sysdoc_file_error",
+                "step": doc_info["step"],
+                "filename": doc_info["filename"],
+                "error": str(e),
+            }
+
+    yield {
+        "type": "sysdoc_complete",
+        "file_count": len(generated),
+        "total_size": sum(len(d["content"].encode("utf-8")) for d in generated),
+    }
+
+
 def _generate_rubric(
     client: anthropic.Anthropic,
     project_description: str,

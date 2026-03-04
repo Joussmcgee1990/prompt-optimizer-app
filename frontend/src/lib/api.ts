@@ -192,6 +192,44 @@ export async function generateSystemDocs(
   return res.json();
 }
 
+export function streamSystemDocs(
+  projectId: string,
+  onEvent: (event: Record<string, unknown>) => void,
+  onDone: () => void,
+  onError: (err: Error) => void
+): () => void {
+  const eventSource = new EventSource(
+    `${API_BASE}/projects/${projectId}/kb/system-docs/stream`
+  );
+
+  const handleEvent = (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data);
+      onEvent(data);
+      if (data.type === "sysdoc_complete" || data.type === "error") {
+        eventSource.close();
+        onDone();
+      }
+    } catch (err) {
+      console.error("SSE parse error:", err);
+    }
+  };
+
+  const eventTypes = [
+    "sysdoc_start", "sysdoc_file_start", "sysdoc_file_complete",
+    "sysdoc_file_skip", "sysdoc_file_error", "sysdoc_complete", "stream_error",
+  ];
+  eventTypes.forEach((type) => eventSource.addEventListener(type, handleEvent));
+
+  eventSource.onerror = () => {
+    if (eventSource.readyState === EventSource.CLOSED) {
+      onError(new Error("SSE connection error"));
+    }
+  };
+
+  return () => eventSource.close();
+}
+
 // ── Documents ──────────────────────────────────────────────────
 
 export async function uploadDocuments(
