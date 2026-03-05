@@ -24,11 +24,14 @@ import {
   researchUrl,
   getDocumentContent,
   updateDocumentContent,
+  getGapAnalysis,
   type Project,
   type KBFile,
   type GoalQuestion,
   type GoalAnswer,
   type DocumentInfo,
+  type GapAnalysis,
+  type GapItem,
 } from "@/lib/api";
 import TerminalOutput, { type TerminalLine } from "@/components/terminal-output";
 import FileUpload from "@/components/file-upload";
@@ -106,6 +109,10 @@ export default function KnowledgePage() {
   const [savingSysDoc, setSavingSysDoc] = useState(false);
   const sysDocCleanupRef = useRef<(() => void) | null>(null);
 
+  // ── Gap Analysis state ──
+  const [gapAnalysis, setGapAnalysis] = useState<GapAnalysis | null>(null);
+  const uploadsRef = useRef<HTMLDivElement>(null);
+
   // ── Uploads state ──
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -172,6 +179,15 @@ export default function KnowledgePage() {
         setUploadsOpen(true);
         // Load system doc files for inline editor
         await loadSystemDocFiles();
+        // Load gap analysis if system docs exist
+        try {
+          const gaps = await getGapAnalysis(projectId);
+          if (gaps.has_gaps && gaps.gaps.length > 0) {
+            setGapAnalysis(gaps);
+          }
+        } catch {
+          // Gap analysis not available yet — that's fine
+        }
       }
     } catch (err) {
       console.error("Failed to load:", err);
@@ -509,6 +525,13 @@ export default function KnowledgePage() {
           `Wrote ${event.filename} (${((event.content_length as number) / 1024).toFixed(1)}KB)`,
           "success"
         );
+        // Capture structured gap data from the stream
+        if (event.gap_data) {
+          const gapData = event.gap_data as GapAnalysis;
+          if (gapData.has_gaps && gapData.gaps?.length > 0) {
+            setGapAnalysis(gapData);
+          }
+        }
         break;
       case "sysdoc_file_skip":
         addSysDocLine(`Skipped ${event.filename}: ${event.reason}`, "dim");
@@ -1229,10 +1252,113 @@ export default function KnowledgePage() {
               </div>
             </div>
           )}
+
+          {/* ── Gap Analysis Cards ── */}
+          {gapAnalysis && gapAnalysis.gaps.length > 0 && !generatingSystemDocs && (
+            <div className="space-y-3 mt-2">
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-[12px] p-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <span className="text-xs font-semibold text-amber-300">
+                    {gapAnalysis.gaps.length} knowledge gap{gapAnalysis.gaps.length !== 1 ? "s" : ""} found
+                  </span>
+                </div>
+                {gapAnalysis.summary && (
+                  <p className="text-xs text-amber-200/70 ml-6">{gapAnalysis.summary}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                {gapAnalysis.gaps.map((gap, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="bg-card-lighter rounded-[10px] border border-border p-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${
+                        gap.severity === "critical" ? "bg-red-400" :
+                        gap.severity === "important" ? "bg-amber-400" : "bg-emerald-400"
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold text-white">{gap.title}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            gap.severity === "critical" ? "bg-red-500/20 text-red-300" :
+                            gap.severity === "important" ? "bg-amber-500/20 text-amber-300" : "bg-emerald-500/20 text-emerald-300"
+                          }`}>
+                            {gap.severity === "nice_to_have" ? "nice to have" : gap.severity}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted mt-1">{gap.description}</p>
+                        <div className="mt-2 flex items-center gap-2">
+                          {gap.action_type === "research_url" && (
+                            <button
+                              onClick={() => {
+                                setUploadsOpen(true);
+                                setResearchUrlInput(gap.action_hint);
+                                setTimeout(() => {
+                                  uploadsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }, 150);
+                              }}
+                              className="text-[10px] px-2.5 py-1.5 bg-accent/10 text-accent border border-accent/20 rounded-[6px] hover:bg-accent/20 transition-colors flex items-center gap-1"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                              </svg>
+                              Research URL
+                            </button>
+                          )}
+                          {gap.action_type === "upload_doc" && (
+                            <button
+                              onClick={() => {
+                                setUploadsOpen(true);
+                                setTimeout(() => {
+                                  uploadsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }, 150);
+                              }}
+                              className="text-[10px] px-2.5 py-1.5 bg-accent/10 text-accent border border-accent/20 rounded-[6px] hover:bg-accent/20 transition-colors flex items-center gap-1"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                              </svg>
+                              Upload Document
+                            </button>
+                          )}
+                          {gap.action_type === "manual_input" && (
+                            <button
+                              onClick={() => {
+                                setUploadsOpen(true);
+                                setTimeout(() => {
+                                  uploadsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }, 150);
+                              }}
+                              className="text-[10px] px-2.5 py-1.5 bg-accent/10 text-accent border border-accent/20 rounded-[6px] hover:bg-accent/20 transition-colors flex items-center gap-1"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                              Add Info
+                            </button>
+                          )}
+                          <span className="text-[10px] text-muted/60 truncate">{gap.action_hint}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </CollapsibleSection>
 
       {/* ═══════════════ SECTION 4: ADDITIONAL UPLOADS ═══════════════ */}
+      <div ref={uploadsRef} />
       <CollapsibleSection
         title="Additional Documents"
         subtitle={documents.length > 0 ? `${documents.length} files uploaded` : "Upload files or research URLs"}

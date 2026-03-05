@@ -203,6 +203,30 @@ export async function updateGoal(
   return res.json();
 }
 
+// ── Gap Analysis ─────────────────────────────────────────────
+
+export interface GapItem {
+  title: string;
+  description: string;
+  severity: "critical" | "important" | "nice_to_have";
+  action_type: "research_url" | "upload_doc" | "manual_input";
+  action_hint: string;
+}
+
+export interface GapAnalysis {
+  has_gaps: boolean;
+  summary?: string;
+  gaps: GapItem[];
+}
+
+export async function getGapAnalysis(projectId: string): Promise<GapAnalysis> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/kb/gap-analysis`, {
+    headers: { ...sessionHeaders() },
+  });
+  if (!res.ok) return { has_gaps: false, gaps: [] };
+  return res.json();
+}
+
 // ── System Documents ──────────────────────────────────────────
 
 export async function generateSystemDocs(

@@ -395,6 +395,19 @@ async def stream_system_docs_endpoint(project_id: str):
                     )
                 # Strip content from SSE payload
                 sse_event = {k: v for k, v in event.items() if k != "content"}
+
+                # For gap analysis, extract structured JSON and include in SSE
+                if event["filename"] == "_system_missing_context.md":
+                    content = event.get("content", "")
+                    marker = "<!-- GAP_DATA_JSON"
+                    if marker in content:
+                        try:
+                            json_str = content.split(marker)[1].split("-->")[0].strip()
+                            gap_data = json.loads(json_str)
+                            sse_event["gap_data"] = gap_data
+                        except (json.JSONDecodeError, IndexError):
+                            pass
+
                 yield {"event": event["type"], "data": json.dumps(sse_event)}
 
             elif event["type"] == "sysdoc_complete":
@@ -410,6 +423,31 @@ async def stream_system_docs_endpoint(project_id: str):
                 yield {"event": event["type"], "data": json.dumps(event)}
 
     return EventSourceResponse(event_generator())
+
+
+# --- Gap Analysis ---
+
+@router.get("/gap-analysis")
+def get_gap_analysis(project_id: str):
+    """Get structured gap analysis data from the existing gap analysis file."""
+    build = db.get_latest_kb_build(project_id)
+    if not build:
+        return {"has_gaps": False, "gaps": []}
+
+    file = db.get_kb_file(project_id, "_system_missing_context.md", build.id)
+    if not file:
+        return {"has_gaps": False, "gaps": []}
+
+    content = file.get("content", "") if isinstance(file, dict) else getattr(file, "content", "")
+    marker = "<!-- GAP_DATA_JSON"
+    if marker in content:
+        try:
+            json_str = content.split(marker)[1].split("-->")[0].strip()
+            return json.loads(json_str)
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+    return {"has_gaps": True, "gaps": [], "summary": "Gap analysis exists but is not structured."}
 
 
 # --- Status ---

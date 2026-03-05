@@ -255,22 +255,42 @@ def _generate_gap_analysis(
     goal_definition: str,
     kb_content: str,
 ) -> Optional[str]:
-    """Analyze KB content vs goal definition and identify gaps."""
+    """Analyze KB content vs goal definition and identify gaps.
+
+    Returns a JSON string with structured gap data that the frontend can render
+    as actionable cards. The raw markdown is embedded in the content field.
+    """
     message = client.messages.create(
         model=MODEL_GENERATE,
         max_tokens=4096,
         system=(
             "You are a knowledge base auditor. Compare what the project NEEDS (from the goal) "
             "against what the KB CONTAINS, and identify critical gaps.\n\n"
-            "Create a Markdown document with:\n"
-            "## Critical Gaps — Information the AI needs but the KB doesn't have. "
-            "For each: what's missing, why it matters, and suggested action.\n"
-            "## Weak Areas — Topics covered but not deeply enough. "
-            "What additional detail would improve responses.\n"
-            "## Recommendations — Prioritized list of what to add. "
-            "Be specific: 'Add competitor pricing comparison' not 'Add more info'.\n\n"
-            "If the KB is comprehensive and has no significant gaps, say so clearly "
-            "and keep this document short. Don't manufacture problems."
+            "Return a JSON object with this exact schema:\n"
+            "```json\n"
+            "{\n"
+            '  "has_gaps": true,\n'
+            '  "summary": "One-sentence overview of the KB completeness",\n'
+            '  "gaps": [\n'
+            "    {\n"
+            '      "title": "Short gap title (3-6 words)",\n'
+            '      "description": "What\'s missing and why it matters (1-2 sentences)",\n'
+            '      "severity": "critical" | "important" | "nice_to_have",\n'
+            '      "action_type": "research_url" | "upload_doc" | "manual_input",\n'
+            '      "action_hint": "Specific suggestion, e.g. a URL to research or what to upload"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "```\n\n"
+            "Rules:\n"
+            "- action_type 'research_url': suggest a specific URL or site to crawl for this info\n"
+            "- action_type 'upload_doc': suggest a specific document type the user likely already has\n"
+            "- action_type 'manual_input': suggest the user write a brief note or answer a question\n"
+            "- Order gaps by severity (critical first)\n"
+            "- Maximum 8 gaps. Focus on the most impactful ones.\n"
+            "- If the KB is genuinely comprehensive, set has_gaps=false and return an empty gaps array\n"
+            "- Don't manufacture problems. Only flag real gaps that would hurt response quality.\n\n"
+            "Return ONLY the JSON object — no markdown fences, no explanation."
         ),
         messages=[{
             "role": "user",
@@ -278,13 +298,50 @@ def _generate_gap_analysis(
                 f"Project: {project_description}\n\n"
                 f"Goal Definition:\n{goal_definition}\n\n"
                 f"Knowledge Base Content (truncated):\n{kb_content[:20000]}\n\n"
-                "Identify gaps between what the goal requires and what the KB provides."
+                "Identify gaps between what the goal requires and what the KB provides. "
+                "Return the structured JSON."
             ),
         }],
     )
 
-    text = message.content[0].text
-    # If Claude says "no gaps", return None to skip this file
-    if "no significant gaps" in text.lower() and len(text) < 300:
-        return None
-    return text
+    text = message.content[0].text.strip()
+
+    # Try to parse as JSON
+    try:
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        data = json.loads(text)
+
+        if not data.get("has_gaps", True) or not data.get("gaps"):
+            return None
+
+        # Build a markdown document from the structured data for the vector DB
+        md_lines = ["# Knowledge Base Gap Analysis\n"]
+        md_lines.append(f"**Summary:** {data.get('summary', 'Gap analysis complete.')}\n")
+
+        for gap in data["gaps"]:
+            severity_label = {"critical": "🔴 CRITICAL", "important": "🟡 IMPORTANT", "nice_to_have": "🟢 NICE TO HAVE"}.get(gap.get("severity", "important"), "🟡 IMPORTANT")
+            md_lines.append(f"\n## {gap['title']} [{severity_label}]")
+            md_lines.append(f"\n{gap['description']}")
+            action = gap.get("action_type", "manual_input")
+            hint = gap.get("action_hint", "")
+            if action == "research_url":
+                md_lines.append(f"\n**Suggested action:** Research URL — {hint}")
+            elif action == "upload_doc":
+                md_lines.append(f"\n**Suggested action:** Upload document — {hint}")
+            else:
+                md_lines.append(f"\n**Suggested action:** Add information — {hint}")
+
+        md_content = "\n".join(md_lines)
+
+        # Embed the structured JSON at the end of the markdown (hidden from display)
+        md_content += f"\n\n<!-- GAP_DATA_JSON\n{json.dumps(data, indent=2)}\n-->"
+
+        return md_content
+
+    except (json.JSONDecodeError, KeyError):
+        # Fallback: Claude didn't return valid JSON — use raw text
+        if "no significant gaps" in text.lower() and len(text) < 300:
+            return None
+        return text
