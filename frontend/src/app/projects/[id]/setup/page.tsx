@@ -221,30 +221,35 @@ export default function SetupPage() {
         )}
       </AnimatePresence>
 
-      {/* Actions */}
-      <div className="flex items-center justify-between">
-        <motion.button
-          onClick={handleSave}
-          disabled={saving}
-          className="px-5 py-2.5 bg-card border border-border text-white font-medium rounded-[10px] hover:border-muted transition-all text-sm disabled:opacity-50"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          {saved ? "✓ Saved!" : saving ? "Saving..." : "Save"}
-        </motion.button>
+      {/* Spacer for sticky mobile bar */}
+      <div className="h-20 md:hidden" />
 
-        <motion.button
-          onClick={handleSaveAndContinue}
-          disabled={saving || !name.trim()}
-          className="px-8 py-2.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          Continue
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </motion.button>
+      {/* Actions — sticky on mobile */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-background/90 backdrop-blur-lg border-t border-border px-6 py-3 md:static md:bg-transparent md:backdrop-blur-none md:border-0 md:px-0 md:py-0">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <motion.button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-5 py-2.5 bg-card border border-border text-white font-medium rounded-[10px] hover:border-muted transition-all text-sm disabled:opacity-50"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            {saved ? "✓ Saved!" : saving ? "Saving..." : "Save"}
+          </motion.button>
+
+          <motion.button
+            onClick={handleSaveAndContinue}
+            disabled={saving || !name.trim()}
+            className="px-8 py-2.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            Continue
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </motion.button>
+        </div>
       </div>
     </motion.div>
   );
