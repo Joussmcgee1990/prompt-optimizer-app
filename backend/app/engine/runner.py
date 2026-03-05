@@ -4,6 +4,7 @@ Uses Opus 4.6 for fact evaluation (most accurate judgement model).
 """
 
 from typing import List, Dict, Callable, Generator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
 from pydantic import BaseModel
@@ -101,10 +102,22 @@ def evaluate_single_fact_with_variance(question: str, response: str, fact: str) 
 
 
 def evaluate_single_response(question: str, response: str, required_facts: List[str]) -> ResponseEvaluation:
-    fact_evaluations = []
-    for fact in required_facts:
-        evaluation = evaluate_single_fact(question, response, fact)
-        fact_evaluations.append(evaluation)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if len(required_facts) <= 1:
+        fact_evaluations = [evaluate_single_fact(question, response, fact) for fact in required_facts]
+    else:
+        # Evaluate all facts in parallel — each is an independent Claude call
+        fact_evaluations = [None] * len(required_facts)
+        with ThreadPoolExecutor(max_workers=min(len(required_facts), 5)) as executor:
+            futures = {
+                executor.submit(evaluate_single_fact, question, response, fact): i
+                for i, fact in enumerate(required_facts)
+            }
+            for future in as_completed(futures):
+                idx = futures[future]
+                fact_evaluations[idx] = future.result()
+
     return ResponseEvaluation(fact_evaluations=fact_evaluations)
 
 
@@ -151,7 +164,7 @@ def evaluate(
     eval_items: List[Dict],
 ) -> tuple:
     """
-    Evaluate a prompt across all items.
+    Evaluate a prompt across all items. Questions run in PARALLEL.
 
     Args:
         query_fn: A function(prompt_template, question) -> answer_text
@@ -164,17 +177,35 @@ def evaluate(
     evaluated_responses = []
     failure_reasons = []
 
-    for item in eval_items:
-        result = process_single_question(query_fn, prompt_template, item)
-        evaluated_responses.append(result)
+    with ThreadPoolExecutor(max_workers=min(len(eval_items), 5)) as executor:
+        futures = {
+            executor.submit(process_single_question, query_fn, prompt_template, item): item
+            for item in eval_items
+        }
 
-        for ev in result["fact_evaluations"]:
-            if not ev["passed"]:
-                failure_reasons.append({
+        for future in as_completed(futures):
+            item = futures[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                result = {
                     "question": item["question"],
-                    "fact": ev["fact"],
-                    "reason": ev["reason"],
-                })
+                    "response": f"Error: {str(e)}",
+                    "score": 0.0,
+                    "fact_evaluations": [
+                        {"fact": f, "passed": False, "reason": f"Error: {str(e)}"}
+                        for f in item["required_facts"]
+                    ],
+                }
+            evaluated_responses.append(result)
+
+            for ev in result["fact_evaluations"]:
+                if not ev["passed"]:
+                    failure_reasons.append({
+                        "question": item["question"],
+                        "fact": ev["fact"],
+                        "reason": ev["reason"],
+                    })
 
     total_score = (
         sum(r["score"] for r in evaluated_responses) / len(evaluated_responses)
@@ -193,6 +224,7 @@ def evaluate_streaming(
 ) -> Generator:
     """
     Same as evaluate() but yields progress events for SSE streaming.
+    Questions are evaluated in PARALLEL for speed.
 
     If variance_detection=True, each fact is checked twice and flaky results are flagged.
 
@@ -204,43 +236,56 @@ def evaluate_streaming(
     failure_reasons = []
     total = len(eval_items)
 
-    for i, item in enumerate(eval_items):
-        try:
-            result = process_single_question(query_fn, prompt_template, item, variance_detection=variance_detection)
-        except Exception as e:
-            # If one question fails, score it 0 and continue with the rest
-            result = {
-                "question": item["question"],
-                "response": f"Error: {str(e)}",
-                "score": 0.0,
-                "fact_evaluations": [
-                    {"fact": f, "passed": False, "reason": f"Evaluation error: {str(e)}"}
-                    for f in item["required_facts"]
-                ],
-            }
-        evaluated_responses.append(result)
-
-        for ev in result["fact_evaluations"]:
-            if not ev["passed"]:
-                failure_reasons.append({
-                    "question": item["question"],
-                    "fact": ev["fact"],
-                    "reason": ev["reason"],
-                })
-
-        running_score = (
-            sum(r["score"] for r in evaluated_responses) / len(evaluated_responses)
-        )
-
-        yield {
-            "type": "progress",
-            "current": i + 1,
-            "total": total,
-            "question": item["question"],
-            "question_score": result["score"],
-            "running_score": round(running_score, 3),
-            "fact_evaluations": result["fact_evaluations"],
+    with ThreadPoolExecutor(max_workers=min(total, 5)) as executor:
+        futures = {
+            executor.submit(
+                process_single_question, query_fn, prompt_template, item,
+                variance_detection=variance_detection,
+            ): item
+            for item in eval_items
         }
+
+        completed_count = 0
+        for future in as_completed(futures):
+            item = futures[future]
+            completed_count += 1
+
+            try:
+                result = future.result()
+            except Exception as e:
+                # If one question fails, score it 0 and continue with the rest
+                result = {
+                    "question": item["question"],
+                    "response": f"Error: {str(e)}",
+                    "score": 0.0,
+                    "fact_evaluations": [
+                        {"fact": f, "passed": False, "reason": f"Evaluation error: {str(e)}"}
+                        for f in item["required_facts"]
+                    ],
+                }
+            evaluated_responses.append(result)
+
+            for ev in result["fact_evaluations"]:
+                if not ev["passed"]:
+                    failure_reasons.append({
+                        "question": item["question"],
+                        "fact": ev["fact"],
+                        "reason": ev["reason"],
+                    })
+
+            running_score = (
+                sum(r["score"] for r in evaluated_responses) / len(evaluated_responses)
+            )
+
+            yield {
+                "type": "progress",
+                "current": completed_count,
+                "total": total,
+                "question": item["question"],
+                "question_score": result["score"],
+                "running_score": round(running_score, 3),
+                "fact_evaluations": result["fact_evaluations"],
+            }
 
     total_score = (
         sum(r["score"] for r in evaluated_responses) / len(evaluated_responses)

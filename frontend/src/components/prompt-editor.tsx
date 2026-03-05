@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 
 interface PromptEditorProps {
@@ -9,6 +9,7 @@ interface PromptEditorProps {
   disabled?: boolean;
   label?: string;
   description?: string;
+  badge?: ReactNode;
 }
 
 export default function PromptEditor({
@@ -17,6 +18,7 @@ export default function PromptEditor({
   disabled = false,
   label = "Prompt Template",
   description,
+  badge,
 }: PromptEditorProps) {
   const [copied, setCopied] = useState(false);
 
@@ -29,10 +31,11 @@ export default function PromptEditor({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-muted uppercase tracking-wider">
             {label}
           </label>
+          {badge}
           {description && (
             <p className="text-xs text-muted/60 mt-0.5">{description}</p>
           )}

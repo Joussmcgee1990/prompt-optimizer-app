@@ -6,6 +6,7 @@ Includes structured failure analysis to make rewrites smarter.
 
 from typing import Callable, Dict, Generator, List
 from functools import partial
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
 from dotenv import load_dotenv
@@ -335,47 +336,57 @@ def run_optimization(
             "prompt": current_prompt,
         }
 
-        # Evaluate with per-question progress
+        # Evaluate with per-question progress — questions run in PARALLEL
         evaluated_responses = []
         failure_reasons = []
 
-        for qi, item in enumerate(eval_items):
-            try:
-                result = process_single_question(query_fn, current_prompt, item)
-            except Exception as e:
-                # If one question fails (timeout, network), score it 0 and continue
-                result = {
-                    "question": item["question"],
-                    "response": f"Error: {str(e)}",
-                    "score": 0.0,
-                    "fact_evaluations": [
-                        {"fact": f, "passed": False, "reason": f"Error: {str(e)}"}
-                        for f in item["required_facts"]
-                    ],
-                }
-            evaluated_responses.append(result)
-
-            for ev in result["fact_evaluations"]:
-                if not ev["passed"]:
-                    failure_reasons.append({
-                        "question": item["question"],
-                        "fact": ev["fact"],
-                        "reason": ev["reason"],
-                    })
-
-            running_score = (
-                sum(r["score"] for r in evaluated_responses) / len(evaluated_responses)
-            )
-
-            yield {
-                "type": "eval_progress",
-                "iteration": iteration,
-                "current": qi + 1,
-                "total": total_questions,
-                "question": item["question"],
-                "question_score": result["score"],
-                "running_score": round(running_score, 3),
+        with ThreadPoolExecutor(max_workers=min(total_questions, 5)) as executor:
+            futures = {
+                executor.submit(process_single_question, query_fn, current_prompt, item): item
+                for item in eval_items
             }
+
+            completed_count = 0
+            for future in as_completed(futures):
+                item = futures[future]
+                completed_count += 1
+
+                try:
+                    result = future.result()
+                except Exception as e:
+                    # If one question fails (timeout, network), score it 0 and continue
+                    result = {
+                        "question": item["question"],
+                        "response": f"Error: {str(e)}",
+                        "score": 0.0,
+                        "fact_evaluations": [
+                            {"fact": f, "passed": False, "reason": f"Error: {str(e)}"}
+                            for f in item["required_facts"]
+                        ],
+                    }
+                evaluated_responses.append(result)
+
+                for ev in result["fact_evaluations"]:
+                    if not ev["passed"]:
+                        failure_reasons.append({
+                            "question": item["question"],
+                            "fact": ev["fact"],
+                            "reason": ev["reason"],
+                        })
+
+                running_score = (
+                    sum(r["score"] for r in evaluated_responses) / len(evaluated_responses)
+                )
+
+                yield {
+                    "type": "eval_progress",
+                    "iteration": iteration,
+                    "current": completed_count,
+                    "total": total_questions,
+                    "question": item["question"],
+                    "question_score": result["score"],
+                    "running_score": round(running_score, 3),
+                }
 
         score = (
             sum(r["score"] for r in evaluated_responses) / len(evaluated_responses)

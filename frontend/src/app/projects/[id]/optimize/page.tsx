@@ -1057,32 +1057,24 @@ export default function OptimizePage() {
                 {/* Side-by-side Prompt Comparison */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {/* Original Prompt */}
-                  <div className="bg-card rounded-[20px] p-6 border border-border relative">
-                    <div className="absolute top-4 right-4">
-                      <span className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-muted/10 text-muted border border-border">
-                        Before
-                      </span>
-                    </div>
+                  <div className="bg-card rounded-[20px] p-6 border border-border">
                     <PromptEditor
                       value={originalPrompt || project?.prompt_template || ""}
                       onChange={() => {}}
                       disabled
                       label="Original Prompt"
+                      badge={<span className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-muted/10 text-muted border border-border">Before</span>}
                     />
                   </div>
 
                   {/* Optimized Prompt */}
-                  <div className="bg-card rounded-[20px] p-6 border border-accent/30 relative">
-                    <div className="absolute top-4 right-4">
-                      <span className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/30">
-                        After
-                      </span>
-                    </div>
+                  <div className="bg-card rounded-[20px] p-6 border border-accent/30">
                     <PromptEditor
                       value={optimizedPrompt}
                       onChange={() => {}}
                       disabled
                       label="Optimized Prompt"
+                      badge={<span className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/30">After</span>}
                     />
                   </div>
                 </div>

@@ -8,6 +8,7 @@ Uses Opus 4.6 for accurate blind judging.
 
 import random
 from typing import Callable, Dict, Generator, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
 from dotenv import load_dotenv
@@ -153,13 +154,83 @@ def blind_compare_single(question: str, response_a: str, response_b: str) -> Dic
     }
 
 
+def _process_single_comparison(
+    query_fn: Callable[[str, str], str],
+    prompt_before: str,
+    prompt_after: str,
+    item: Dict,
+) -> Dict:
+    """Process a single comparison question: generate both answers, blind judge, map result.
+
+    This is the unit of work that runs in parallel.
+    """
+    question = item["question"]
+
+    # Generate answers with both prompts
+    try:
+        answer_before = query_fn(prompt_before, question)
+        answer_after = query_fn(prompt_after, question)
+    except Exception as e:
+        return {
+            "question": question,
+            "error": str(e),
+            "blind_winner": "tie",
+            "real_winner": "tie",
+            "dimensions": {},
+            "reasoning": f"Error generating answers: {e}",
+        }
+
+    # Random A/B assignment — this is the key to blind comparison
+    before_is_a = random.choice([True, False])
+    response_a = answer_before if before_is_a else answer_after
+    response_b = answer_after if before_is_a else answer_before
+
+    # Blind judge
+    try:
+        result = blind_compare_single(question, response_a, response_b)
+    except Exception as e:
+        return {
+            "question": question,
+            "error": str(e),
+            "blind_winner": "tie",
+            "real_winner": "tie",
+            "dimensions": {},
+            "reasoning": f"Error during judging: {e}",
+        }
+
+    # Map blind winner back to real identity
+    blind_winner = result["winner"]
+    if blind_winner == "tie":
+        real_winner = "tie"
+    elif (blind_winner == "A" and before_is_a) or (blind_winner == "B" and not before_is_a):
+        real_winner = "before"
+    else:
+        real_winner = "after"
+
+    # Map dimension scores back to before/after
+    mapped_dims = {}
+    for dim_name, scores in result["dimensions"].items():
+        if before_is_a:
+            mapped_dims[dim_name] = {"before": scores["a"], "after": scores["b"]}
+        else:
+            mapped_dims[dim_name] = {"before": scores["b"], "after": scores["a"]}
+
+    return {
+        "question": question,
+        "blind_winner": blind_winner,
+        "real_winner": real_winner,
+        "dimensions": mapped_dims,
+        "reasoning": result["reasoning"],
+    }
+
+
 def run_comparison(
     query_fn: Callable[[str, str], str],
     prompt_before: str,
     prompt_after: str,
     eval_items: List[Dict],
 ) -> Generator:
-    """Run blind A/B comparison across all eval items.
+    """Run blind A/B comparison across all eval items. Questions run in PARALLEL.
 
     For each question:
     1. Generate answers with both prompts via RAG
@@ -190,102 +261,60 @@ def run_comparison(
         "instruction_adherence": {"before": 0, "after": 0},
     }
 
-    for i, item in enumerate(eval_items):
-        question = item["question"]
-
-        yield {
-            "type": "comparison_generating",
-            "current": i + 1,
-            "total": total,
-            "question": question,
+    with ThreadPoolExecutor(max_workers=min(total, 5)) as executor:
+        futures = {
+            executor.submit(
+                _process_single_comparison, query_fn, prompt_before, prompt_after, item
+            ): item
+            for item in eval_items
         }
 
-        # Generate answers with both prompts
-        try:
-            answer_before = query_fn(prompt_before, question)
-            answer_after = query_fn(prompt_after, question)
-        except Exception as e:
-            question_results.append({
-                "question": question,
-                "error": str(e),
-                "blind_winner": "tie",
-                "real_winner": "tie",
-                "dimensions": {},
-                "reasoning": f"Error generating answers: {e}",
-            })
-            ties += 1
-            continue
+        completed_count = 0
+        for future in as_completed(futures):
+            item = futures[future]
+            completed_count += 1
 
-        # Random A/B assignment — this is the key to blind comparison
-        before_is_a = random.choice([True, False])
-        response_a = answer_before if before_is_a else answer_after
-        response_b = answer_after if before_is_a else answer_before
+            try:
+                qr = future.result()
+            except Exception as e:
+                qr = {
+                    "question": item["question"],
+                    "error": str(e),
+                    "blind_winner": "tie",
+                    "real_winner": "tie",
+                    "dimensions": {},
+                    "reasoning": f"Error: {e}",
+                }
 
-        yield {
-            "type": "comparison_judging",
-            "current": i + 1,
-            "total": total,
-            "question": question,
-        }
+            question_results.append(qr)
 
-        # Blind judge
-        try:
-            result = blind_compare_single(question, response_a, response_b)
-        except Exception as e:
-            question_results.append({
-                "question": question,
-                "error": str(e),
-                "blind_winner": "tie",
-                "real_winner": "tie",
-                "dimensions": {},
-                "reasoning": f"Error during judging: {e}",
-            })
-            ties += 1
-            continue
-
-        # Map blind winner back to real identity
-        blind_winner = result["winner"]
-        if blind_winner == "tie":
-            real_winner = "tie"
-            ties += 1
-        elif (blind_winner == "A" and before_is_a) or (blind_winner == "B" and not before_is_a):
-            real_winner = "before"
-            before_wins += 1
-        else:
-            real_winner = "after"
-            after_wins += 1
-
-        # Map dimension scores back to before/after
-        mapped_dims = {}
-        for dim_name, scores in result["dimensions"].items():
-            if before_is_a:
-                mapped_dims[dim_name] = {"before": scores["a"], "after": scores["b"]}
+            # Update win/tie counts
+            if "error" in qr:
+                ties += 1
+            elif qr["real_winner"] == "tie":
+                ties += 1
+            elif qr["real_winner"] == "before":
+                before_wins += 1
             else:
-                mapped_dims[dim_name] = {"before": scores["b"], "after": scores["a"]}
+                after_wins += 1
 
-            dim_totals[dim_name]["before"] += mapped_dims[dim_name]["before"]
-            dim_totals[dim_name]["after"] += mapped_dims[dim_name]["after"]
+            # Accumulate dimension scores
+            for dim_name, dim_scores in qr.get("dimensions", {}).items():
+                if dim_name in dim_totals:
+                    dim_totals[dim_name]["before"] += dim_scores.get("before", 0)
+                    dim_totals[dim_name]["after"] += dim_scores.get("after", 0)
 
-        qr = {
-            "question": question,
-            "blind_winner": blind_winner,
-            "real_winner": real_winner,
-            "dimensions": mapped_dims,
-            "reasoning": result["reasoning"],
-        }
-        question_results.append(qr)
-
-        yield {
-            "type": "comparison_question_complete",
-            "current": i + 1,
-            "total": total,
-            "question": question,
-            "real_winner": real_winner,
-            "blind_winner": blind_winner,
-            "after_wins": after_wins,
-            "before_wins": before_wins,
-            "ties": ties,
-        }
+            yield {
+                "type": "comparison_question_complete",
+                "current": completed_count,
+                "total": total,
+                "question": qr["question"],
+                "real_winner": qr["real_winner"],
+                "blind_winner": qr["blind_winner"],
+                "after_wins": after_wins,
+                "before_wins": before_wins,
+                "ties": ties,
+            }
 
     # Calculate dimension averages
     dimension_averages = {}
