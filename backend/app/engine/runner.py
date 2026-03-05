@@ -3,6 +3,7 @@
 Uses Opus 4.6 for fact evaluation (most accurate judgement model).
 """
 
+import threading
 from typing import List, Dict, Callable, Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -15,12 +16,15 @@ from .models import MODEL_EVAL
 load_dotenv(override=True)
 
 _client = None
+_client_lock = threading.Lock()
 
 
 def _get_client():
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(timeout=120.0)
+        with _client_lock:
+            if _client is None:
+                _client = anthropic.Anthropic(timeout=120.0)
     return _client
 
 

@@ -1,36 +1,49 @@
 """RAG engine — parameterized per-project (no module globals).
 
 Uses Sonnet 4.6 for query rephrasing, Opus 4.6 for RAG answer generation.
+
+Thread-safe: singletons use locks to prevent duplicate initialization,
+and ChromaDB clients are cached per-project to avoid concurrent SQLite access.
 """
 
 import os
+import threading
 from pathlib import Path
 
 _DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent.parent.parent)))
 PROJECTS_DIR = _DATA_DIR / "projects"
 
-# Shared singleton clients
+# Thread-safe singleton initialization
+_init_lock = threading.Lock()
 _anthropic_client = None
 _embedding_function = None
+
+# Cached ChromaDB clients — one per project to avoid concurrent SQLite connections
+_chroma_clients: dict[str, object] = {}
+_chroma_lock = threading.Lock()
 
 
 def _get_anthropic_client():
     global _anthropic_client
     if _anthropic_client is None:
-        import anthropic
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
-        _anthropic_client = anthropic.Anthropic()
+        with _init_lock:
+            if _anthropic_client is None:  # double-check after acquiring lock
+                import anthropic
+                from dotenv import load_dotenv
+                load_dotenv(override=True)
+                _anthropic_client = anthropic.Anthropic()
     return _anthropic_client
 
 
 def _get_embedding_function():
     global _embedding_function
     if _embedding_function is None:
-        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-        _embedding_function = SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2"
-        )
+        with _init_lock:
+            if _embedding_function is None:  # double-check after acquiring lock
+                from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+                _embedding_function = SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
     return _embedding_function
 
 
@@ -42,12 +55,25 @@ def _project_data_path(project_id: str) -> str:
     return str(PROJECTS_DIR / project_id / "data")
 
 
+def _get_chroma_client(project_id: str):
+    """Get a cached ChromaDB PersistentClient for a project (thread-safe).
+
+    Reusing a single client per project avoids multiple SQLite connections
+    to the same database file, which prevents locking issues under parallel access.
+    """
+    if project_id not in _chroma_clients:
+        with _chroma_lock:
+            if project_id not in _chroma_clients:
+                import chromadb
+                db_path = _project_db_path(project_id)
+                os.makedirs(db_path, exist_ok=True)
+                _chroma_clients[project_id] = chromadb.PersistentClient(path=db_path)
+    return _chroma_clients[project_id]
+
+
 def _get_collection(project_id: str, collection_name: str):
-    """Get or create a ChromaDB collection for a project."""
-    import chromadb
-    db_path = _project_db_path(project_id)
-    os.makedirs(db_path, exist_ok=True)
-    client = chromadb.PersistentClient(path=db_path)
+    """Get or create a ChromaDB collection for a project (thread-safe)."""
+    client = _get_chroma_client(project_id)
     return client.get_or_create_collection(
         collection_name, embedding_function=_get_embedding_function()
     )
@@ -163,8 +189,12 @@ def clear_collection(project_id: str, collection_name: str):
     import chromadb
     db_path = _project_db_path(project_id)
     if os.path.exists(db_path):
-        client = chromadb.PersistentClient(path=db_path)
+        # Use cached client if available, otherwise create temporary one
         try:
+            client = _get_chroma_client(project_id)
             client.delete_collection(collection_name)
         except Exception:
             pass
+        # Invalidate the cached client so it's re-created on next use
+        with _chroma_lock:
+            _chroma_clients.pop(project_id, None)
