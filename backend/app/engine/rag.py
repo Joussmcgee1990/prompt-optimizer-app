@@ -93,9 +93,7 @@ def query_rag(project_id: str, collection_name: str, prompt_template: str, quest
         messages=[
             {
                 "role": "user",
-                "content": prompt_template.format(
-                    context=concatenated_docs, question=question
-                ),
+                "content": prompt_template.replace("{context}", concatenated_docs).replace("{question}", question),
             },
         ],
     )

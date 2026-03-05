@@ -8,7 +8,7 @@ import PromptEditor from "@/components/prompt-editor";
 import ModelBadge from "@/components/model-badge";
 import ProcessingBanner from "@/components/processing-banner";
 
-const DEFAULT_PROMPT = `You are a knowledgeable advisor for {company_name}. Your role is to provide accurate, helpful answers based strictly on the provided reference material.
+const DEFAULT_PROMPT = `You are a knowledgeable advisor. Your role is to provide accurate, helpful answers based strictly on the provided reference material.
 
 Context from knowledge base:
 {context}

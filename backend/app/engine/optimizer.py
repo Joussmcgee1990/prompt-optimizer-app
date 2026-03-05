@@ -35,7 +35,9 @@ def optimize_prompt_with_claude(prompt: str, feedback: str, score: float) -> str
         system=(
             "You are an expert prompt engineer. Your task is to improve a RAG prompt template "
             "based on evaluation feedback. The prompt MUST keep the {context} and {question} "
-            "placeholders exactly as they are. Focus on making the prompt more specific, "
+            "placeholders exactly as they are. Do NOT introduce any other curly-brace placeholders "
+            "like {company_name}, {agent_name}, {role}, etc. — write specific names and roles "
+            "directly into the prompt text. Focus on making the prompt more specific, "
             "adding relevant instructions, and addressing the failure patterns."
         ),
         messages=[
