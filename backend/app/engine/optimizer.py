@@ -229,39 +229,77 @@ def _format_structured_feedback(analysis: Dict, raw_failures: List[Dict]) -> str
         for fr in raw_failures[:10]:
             parts.append(f"  - Q: {fr['question']} | Missing: {fr['fact']}")
 
+    if not parts:
+        parts.append(
+            "The prompt scored well but can still be improved. "
+            "Focus on: clearer structure, more specific instructions, "
+            "better guardrails, and explicit output format requirements."
+        )
+
     return "\n".join(parts)
 
 
 def optimize_prompt_with_claude(prompt: str, feedback: str, score: float) -> str:
-    """Use Claude to generate an improved prompt based on feedback."""
+    """Use Claude to generate an improved prompt based on feedback.
+
+    Includes retry logic: if Claude returns the same prompt, it forces a second attempt.
+    """
     client = _get_client()
+
+    system_prompt = (
+        "You are an expert prompt engineer. Your task is to SUBSTANTIALLY REWRITE and IMPROVE "
+        "a RAG prompt template based on evaluation feedback.\n\n"
+        "CRITICAL RULES:\n"
+        "1. You MUST produce a meaningfully DIFFERENT prompt — never return the input unchanged.\n"
+        "2. The prompt MUST keep the {context} and {question} placeholders exactly as they are.\n"
+        "3. Do NOT introduce any other curly-brace placeholders like {company_name}, {agent_name}, "
+        "{role}, etc. — write specific names and roles directly into the prompt text.\n"
+        "4. Focus on: adding specific instructions that address the failure patterns, restructuring "
+        "for clarity, adding guardrails and format requirements, and making the prompt more explicit "
+        "about what a good answer looks like.\n"
+        "5. Return ONLY the improved prompt text. No explanations, no markdown fences, no preamble."
+    )
+
+    user_content = (
+        f"Here is the current prompt (scoring {score:.0%}):\n\n"
+        f"---START PROMPT---\n{prompt}\n---END PROMPT---\n\n"
+        f"Here is the evaluation feedback showing what went wrong:\n{feedback}\n\n"
+        f"REWRITE this prompt to fix the failures listed above. The new prompt must be "
+        f"substantially different — add new instructions, restructure sections, include "
+        f"specific guidance that addresses each failure pattern. Return ONLY the improved prompt."
+    )
 
     message = client.messages.create(
         model=MODEL_OPTIMIZE,
         max_tokens=2048,
-        system=(
-            "You are an expert prompt engineer. Your task is to improve a RAG prompt template "
-            "based on evaluation feedback. The prompt MUST keep the {context} and {question} "
-            "placeholders exactly as they are. Do NOT introduce any other curly-brace placeholders "
-            "like {company_name}, {agent_name}, {role}, etc. — write specific names and roles "
-            "directly into the prompt text. Focus on making the prompt more specific, "
-            "adding relevant instructions, and addressing the failure patterns."
-        ),
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Here is the current prompt (scoring {score:.2f} out of 1.0):\n\n"
-                    f"---\n{prompt}\n---\n\n"
-                    f"Here are the failure reasons:\n{feedback}\n\n"
-                    f"Please write an improved version of this prompt that addresses "
-                    f"these failures. Keep the {{context}} and {{question}} placeholders. "
-                    f"Return ONLY the improved prompt, nothing else."
-                ),
-            },
-        ],
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_content}],
     )
-    return message.content[0].text
+    result = message.content[0].text.strip()
+
+    # Safety check: if Claude returned the same prompt, force a retry with stronger instruction
+    if result.strip() == prompt.strip():
+        retry_msg = client.messages.create(
+            model=MODEL_OPTIMIZE,
+            max_tokens=2048,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": result},
+                {
+                    "role": "user",
+                    "content": (
+                        "This is IDENTICAL to the original prompt. You MUST rewrite it differently. "
+                        "Add new sections, restructure existing instructions, incorporate specific "
+                        "guidance to fix the failures. The new prompt must be visibly different. "
+                        "Return ONLY the rewritten prompt."
+                    ),
+                },
+            ],
+        )
+        result = retry_msg.content[0].text.strip()
+
+    return result
 
 
 def run_optimization(
@@ -284,6 +322,10 @@ def run_optimization(
     """
     current_prompt = prompt_template
     total_questions = len(eval_items)
+
+    # Track the best-scoring prompt across all iterations
+    best_prompt = prompt_template
+    best_score = 0.0
 
     for iteration in range(1, max_iterations + 1):
         yield {
@@ -340,6 +382,11 @@ def run_optimization(
             if evaluated_responses else 0.0
         )
 
+        # Track the best prompt seen so far
+        if score >= best_score:
+            best_score = score
+            best_prompt = current_prompt
+
         yield {
             "type": "iteration_complete",
             "iteration": iteration,
@@ -348,18 +395,21 @@ def run_optimization(
             "total_items": total_questions,
         }
 
-        if score >= target_score:
+        # Only allow early exit AFTER the prompt has been rewritten at least once
+        # (i.e., from iteration 2 onward). Iteration 1 always goes through the
+        # analyze → rewrite cycle so the user always gets an improved prompt.
+        if iteration > 1 and score >= target_score:
             yield {
                 "type": "complete",
-                "final_prompt": current_prompt,
-                "final_score": round(score, 3),
+                "final_prompt": best_prompt,
+                "final_score": round(best_score, 3),
                 "iterations": iteration,
                 "failure_reasons": failure_reasons,
             }
             return
 
         if iteration < max_iterations:
-            # Phase 1: Analyze failures
+            # Phase 1: Analyze failures (even on good scores — still find improvement areas)
             yield {"type": "analyzing", "iteration": iteration}
 
             try:
@@ -379,11 +429,11 @@ def run_optimization(
             feedback_str = _format_structured_feedback(analysis, failure_reasons)
             current_prompt = optimize_prompt_with_claude(current_prompt, feedback_str, score)
 
-    # Max retries exceeded
+    # Finished all iterations — always return the HIGHEST scoring prompt
     yield {
-        "type": "max_retries",
-        "final_prompt": current_prompt,
-        "final_score": round(score, 3),
+        "type": "complete" if best_score >= target_score else "max_retries",
+        "final_prompt": best_prompt,
+        "final_score": round(best_score, 3),
         "iterations": max_iterations,
         "failure_reasons": failure_reasons,
     }
