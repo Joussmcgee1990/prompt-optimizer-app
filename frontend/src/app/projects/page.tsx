@@ -20,12 +20,7 @@ export default function ProjectsPage() {
     // Detect if running inside an iframe (embedded on vyzn.ai)
     const embedded = window.self !== window.top;
     setIsEmbedded(embedded);
-    if (!embedded) {
-      loadProjects();
-    } else {
-      // In iframe mode, don't load existing projects — show empty state
-      setLoading(false);
-    }
+    loadProjects(); // Always load — session isolation handles per-user filtering
   }, []);
 
   async function loadProjects() {
