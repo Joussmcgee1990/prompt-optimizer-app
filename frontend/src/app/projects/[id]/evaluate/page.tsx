@@ -21,6 +21,7 @@ interface FactResult {
   fact: string;
   found: boolean;
   explanation: string;
+  confidence?: "high" | "flaky";
 }
 
 interface EvalResult {
@@ -36,6 +37,7 @@ function mapFactEval(ev: Record<string, unknown>): FactResult {
     fact: (ev.fact as string) || "",
     found: !!(ev.passed ?? ev.found),
     explanation: (ev.reason as string) || (ev.explanation as string) || "",
+    confidence: (ev.confidence as "high" | "flaky") || undefined,
   };
 }
 
@@ -80,6 +82,7 @@ export default function EvaluatePage() {
   const [totalScore, setTotalScore] = useState<number | null>(null);
   const [results, setResults] = useState<EvalResult[]>([]);
   const [failureReasons, setFailureReasons] = useState<string[]>([]);
+  const [varianceDetection, setVarianceDetection] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -194,7 +197,8 @@ export default function EvaluatePage() {
       (err) => {
         console.error("Eval stream error:", err);
         setRunning(false);
-      }
+      },
+      varianceDetection,
     );
 
     cleanupRef.current = cleanup;
@@ -365,7 +369,35 @@ export default function EvaluatePage() {
 
       {/* Run Button */}
       {!hasNoQuestions && (
-        <div className="flex flex-col items-center gap-2">
+        <div className="flex flex-col items-center gap-3">
+          {/* Variance Detection Toggle */}
+          <label className="flex items-center gap-2.5 cursor-pointer group">
+            <div className="relative">
+              <input
+                type="checkbox"
+                checked={varianceDetection}
+                onChange={(e) => setVarianceDetection(e.target.checked)}
+                disabled={running}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-border rounded-full peer-checked:bg-accent transition-colors peer-disabled:opacity-50" />
+              <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted group-hover:text-white transition-colors">
+                Variance Detection
+              </span>
+              <span className="text-[10px] text-muted/60 bg-background px-1.5 py-0.5 rounded border border-border/50">
+                2× cost
+              </span>
+            </div>
+          </label>
+          {varianceDetection && (
+            <p className="text-[11px] text-warning/70 text-center max-w-sm">
+              Each fact will be checked twice to identify flaky results. Doubles API usage.
+            </p>
+          )}
+
           <motion.button
             onClick={handleRunEval}
             disabled={running || validItemCount === 0}
@@ -517,6 +549,34 @@ export default function EvaluatePage() {
                       ? "Decent start. The optimizer should be able to improve this significantly."
                       : "There's room for improvement. The optimizer will work on addressing the failures below."}
                 </p>
+                {/* Flaky count if variance detection was used */}
+                {results.some(r => r.facts.some(f => f.confidence)) && (
+                  <div className="mt-4 flex items-center gap-3">
+                    {(() => {
+                      const flakyCount = results.reduce((acc, r) => acc + r.facts.filter(f => f.confidence === "flaky").length, 0);
+                      const verifiedCount = results.reduce((acc, r) => acc + r.facts.filter(f => f.confidence === "high").length, 0);
+                      return (
+                        <>
+                          <span className="text-xs text-success/70 flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            {verifiedCount} verified
+                          </span>
+                          {flakyCount > 0 && (
+                            <span className="text-xs text-warning/70 flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                              </svg>
+                              {flakyCount} flaky
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+
                 {failureReasons.length > 0 && (
                   <div className="mt-6 w-full max-w-lg">
                     <h3 className="text-xs font-medium text-error uppercase tracking-wider mb-2">
@@ -579,7 +639,11 @@ export default function EvaluatePage() {
                             key={fi}
                             className="flex items-start gap-2 text-sm"
                           >
-                            {fact.found ? (
+                            {fact.confidence === "flaky" ? (
+                              <svg className="w-4 h-4 text-warning shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                              </svg>
+                            ) : fact.found ? (
                               <svg className="w-4 h-4 text-success shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                               </svg>
@@ -588,10 +652,28 @@ export default function EvaluatePage() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                               </svg>
                             )}
-                            <div>
-                              <span className={fact.found ? "text-muted" : "text-error/80"}>
-                                {fact.fact}
-                              </span>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className={
+                                  fact.confidence === "flaky"
+                                    ? "text-warning/80"
+                                    : fact.found
+                                      ? "text-muted"
+                                      : "text-error/80"
+                                }>
+                                  {fact.fact}
+                                </span>
+                                {fact.confidence === "flaky" && (
+                                  <span className="text-[10px] text-warning bg-warning/10 border border-warning/20 px-1.5 py-0.5 rounded-full font-medium shrink-0">
+                                    Flaky
+                                  </span>
+                                )}
+                                {fact.confidence === "high" && (
+                                  <span className="text-[10px] text-success/60 bg-success/5 border border-success/10 px-1.5 py-0.5 rounded-full shrink-0">
+                                    Verified
+                                  </span>
+                                )}
+                              </div>
                               {fact.explanation && (
                                 <p className="text-xs text-muted/60 mt-0.5">{fact.explanation}</p>
                               )}

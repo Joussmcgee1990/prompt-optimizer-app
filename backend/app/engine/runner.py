@@ -74,6 +74,32 @@ def evaluate_single_fact(question: str, response: str, fact: str) -> FactEvaluat
     return FactEvaluation(**tool_input)
 
 
+def evaluate_single_fact_with_variance(question: str, response: str, fact: str) -> dict:
+    """Run fact evaluation twice to detect variance. Returns result with confidence.
+
+    If two runs disagree, the fact is marked "flaky" and conservatively scored as failed.
+    If they agree, it's marked as "high" confidence.
+    """
+    result1 = evaluate_single_fact(question, response, fact)
+    result2 = evaluate_single_fact(question, response, fact)
+
+    if result1.passed == result2.passed:
+        return {
+            "fact": fact,
+            "passed": result1.passed,
+            "reason": result1.reason,
+            "confidence": "high",
+        }
+    else:
+        # Disagreement — mark as flaky, use conservative (fail)
+        return {
+            "fact": fact,
+            "passed": False,
+            "reason": f"Flaky result — Run 1: {'pass' if result1.passed else 'fail'} ({result1.reason}), Run 2: {'pass' if result2.passed else 'fail'} ({result2.reason})",
+            "confidence": "flaky",
+        }
+
+
 def evaluate_single_response(question: str, response: str, required_facts: List[str]) -> ResponseEvaluation:
     fact_evaluations = []
     for fact in required_facts:
@@ -86,20 +112,37 @@ def process_single_question(
     query_fn: Callable[[str, str], str],
     prompt_template: str,
     item: Dict,
+    variance_detection: bool = False,
 ) -> Dict:
-    """Evaluate one Q&A pair using a provided query function."""
+    """Evaluate one Q&A pair using a provided query function.
+
+    If variance_detection=True, each fact is checked twice and disagreements
+    are flagged as "flaky" with conservative scoring.
+    """
     question = item["question"]
     response = query_fn(prompt_template, question)
 
-    evaluation = evaluate_single_response(question, response, item["required_facts"])
-    passed_count = sum(1 for ev in evaluation.fact_evaluations if ev.passed)
-
-    return {
-        "question": question,
-        "response": response,
-        "score": passed_count / len(item["required_facts"]),
-        "fact_evaluations": [ev.model_dump() for ev in evaluation.fact_evaluations],
-    }
+    if variance_detection:
+        fact_results = []
+        for fact in item["required_facts"]:
+            result = evaluate_single_fact_with_variance(question, response, fact)
+            fact_results.append(result)
+        passed_count = sum(1 for ev in fact_results if ev["passed"])
+        return {
+            "question": question,
+            "response": response,
+            "score": passed_count / len(item["required_facts"]),
+            "fact_evaluations": fact_results,
+        }
+    else:
+        evaluation = evaluate_single_response(question, response, item["required_facts"])
+        passed_count = sum(1 for ev in evaluation.fact_evaluations if ev.passed)
+        return {
+            "question": question,
+            "response": response,
+            "score": passed_count / len(item["required_facts"]),
+            "fact_evaluations": [ev.model_dump() for ev in evaluation.fact_evaluations],
+        }
 
 
 def evaluate(
@@ -146,9 +189,12 @@ def evaluate_streaming(
     query_fn: Callable[[str, str], str],
     prompt_template: str,
     eval_items: List[Dict],
+    variance_detection: bool = False,
 ) -> Generator:
     """
     Same as evaluate() but yields progress events for SSE streaming.
+
+    If variance_detection=True, each fact is checked twice and flaky results are flagged.
 
     Yields dicts like:
         {"type": "progress", "current": 1, "total": 10, "question": "...", "score": 0.67}
@@ -160,7 +206,7 @@ def evaluate_streaming(
 
     for i, item in enumerate(eval_items):
         try:
-            result = process_single_question(query_fn, prompt_template, item)
+            result = process_single_question(query_fn, prompt_template, item, variance_detection=variance_detection)
         except Exception as e:
             # If one question fails, score it 0 and continue with the rest
             result = {

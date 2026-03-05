@@ -395,10 +395,15 @@ export function streamEvaluation(
   projectId: string,
   onEvent: (event: Record<string, unknown>) => void,
   onDone: () => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  varianceDetection: boolean = false,
 ): () => void {
   const sid = getSessionId();
-  const url = `${API_BASE}/projects/${projectId}/evaluate/stream${sid ? `?session_id=${sid}` : ""}`;
+  const params = new URLSearchParams();
+  if (sid) params.set("session_id", sid);
+  if (varianceDetection) params.set("variance_detection", "true");
+  const qs = params.toString();
+  const url = `${API_BASE}/projects/${projectId}/evaluate/stream${qs ? `?${qs}` : ""}`;
   const eventSource = new EventSource(url);
 
   const handleEvent = (e: MessageEvent) => {
@@ -459,6 +464,8 @@ export function streamOptimization(
   eventSource.addEventListener("iteration_start", handleEvent);
   eventSource.addEventListener("eval_progress", handleEvent);
   eventSource.addEventListener("iteration_complete", handleEvent);
+  eventSource.addEventListener("analyzing", handleEvent);
+  eventSource.addEventListener("analysis_complete", handleEvent);
   eventSource.addEventListener("optimizing", handleEvent);
   eventSource.addEventListener("complete", handleEvent);
   eventSource.addEventListener("max_retries", handleEvent);
@@ -617,6 +624,86 @@ export async function getKBStatus(
   projectId: string
 ): Promise<{ status: string; build: Record<string, unknown> | null }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/kb/status`, {
+    headers: { ...sessionHeaders() },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+// ── Blind A/B Comparison ────────────────────────────────────────
+
+export interface ComparisonDimension {
+  before: number;
+  after: number;
+}
+
+export interface ComparisonQuestionResult {
+  question: string;
+  blind_winner: "A" | "B" | "tie";
+  real_winner: "before" | "after" | "tie";
+  dimensions: Record<string, ComparisonDimension>;
+  reasoning: string;
+  error?: string;
+}
+
+export interface ComparisonSummary {
+  overall_winner: "before" | "after" | "tie";
+  after_wins: number;
+  before_wins: number;
+  ties: number;
+  dimension_averages: Record<string, ComparisonDimension>;
+  question_results: ComparisonQuestionResult[];
+}
+
+export function streamComparison(
+  projectId: string,
+  onEvent: (event: Record<string, unknown>) => void,
+  onDone: () => void,
+  onError: (err: Error) => void,
+  optimizationRunId?: string,
+): () => void {
+  const sid = getSessionId();
+  let url = `${API_BASE}/projects/${projectId}/compare/stream`;
+  const params = new URLSearchParams();
+  if (sid) params.set("session_id", sid);
+  if (optimizationRunId) params.set("optimization_run_id", optimizationRunId);
+  const qs = params.toString();
+  if (qs) url += `?${qs}`;
+
+  const eventSource = new EventSource(url);
+
+  const handleEvent = (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data);
+      onEvent(data);
+      if (data.type === "comparison_complete" || data.type === "error") {
+        eventSource.close();
+        onDone();
+      }
+    } catch (err) {
+      console.error("SSE parse error:", err);
+    }
+  };
+
+  const eventTypes = [
+    "comparison_start", "comparison_generating", "comparison_judging",
+    "comparison_question_complete", "comparison_complete", "stream_error",
+  ];
+  eventTypes.forEach((type) => eventSource.addEventListener(type, handleEvent));
+
+  eventSource.onerror = () => {
+    if (eventSource.readyState === EventSource.CLOSED) {
+      onError(new Error("SSE connection error"));
+    }
+  };
+
+  return () => eventSource.close();
+}
+
+export async function getLatestComparison(
+  projectId: string,
+): Promise<{ comparison: ComparisonSummary | null }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/compare/latest`, {
     headers: { ...sessionHeaders() },
   });
   if (!res.ok) throw new Error(await res.text());

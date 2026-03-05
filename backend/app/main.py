@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routers import projects, documents, evaluate, optimize, knowledge_base, export
+from .routers import projects, documents, evaluate, optimize, knowledge_base, export, compare
 
 app = FastAPI(
     title="Prompt Builder & Optimizer API",
@@ -41,6 +41,7 @@ app.include_router(evaluate.router)
 app.include_router(optimize.router)
 app.include_router(knowledge_base.router)
 app.include_router(export.router)
+app.include_router(compare.router)
 
 
 @app.on_event("startup")

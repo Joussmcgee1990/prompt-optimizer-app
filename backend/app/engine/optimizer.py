@@ -1,6 +1,7 @@
 """Optimization engine — runs evaluate→optimize loop, yields progress for SSE.
 
 Uses Opus 4.6 for prompt rewriting (highest-quality reasoning).
+Includes structured failure analysis to make rewrites smarter.
 """
 
 from typing import Callable, Dict, Generator, List
@@ -9,7 +10,7 @@ from functools import partial
 import anthropic
 from dotenv import load_dotenv
 
-from .models import MODEL_OPTIMIZE
+from .models import MODEL_OPTIMIZE, MODEL_GENERATE
 
 from .runner import process_single_question
 
@@ -23,6 +24,212 @@ def _get_client():
     if _client is None:
         _client = anthropic.Anthropic(timeout=120.0)
     return _client
+
+
+def analyze_failures(failures: List[Dict], current_prompt: str) -> Dict:
+    """Categorize failures into dimensions with prioritized suggestions.
+
+    Uses Claude Sonnet with tool_use to produce structured analysis.
+    Returns: {
+        "categories": {
+            "instruction_clarity": {"count": N, "patterns": [...], "severity": 1-5},
+            ...
+        },
+        "suggestions": ["...", ...],  # prioritized by impact
+        "summary": "..."
+    }
+    """
+    if not failures:
+        return {"categories": {}, "suggestions": [], "summary": "No failures to analyze."}
+
+    client = _get_client()
+
+    # Format failures for analysis
+    failure_text = "\n".join(
+        f"- Q: {f['question']} | Missing: {f['fact']} | Reason: {f['reason']}"
+        for f in failures[:20]  # Cap at 20 to manage token usage
+    )
+
+    tools = [
+        {
+            "name": "record_analysis",
+            "description": "Record the structured failure analysis results",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "instruction_clarity_count": {
+                        "type": "integer",
+                        "description": "Number of failures caused by unclear or ambiguous instructions in the prompt",
+                    },
+                    "instruction_clarity_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Specific patterns of instruction clarity failures (1-3 items)",
+                    },
+                    "instruction_clarity_severity": {
+                        "type": "integer", "minimum": 1, "maximum": 5,
+                        "description": "How severe this category is (1=minor, 5=critical)",
+                    },
+                    "context_utilization_count": {
+                        "type": "integer",
+                        "description": "Number of failures where the model didn't properly use provided context",
+                    },
+                    "context_utilization_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Specific patterns of context utilization failures (1-3 items)",
+                    },
+                    "context_utilization_severity": {
+                        "type": "integer", "minimum": 1, "maximum": 5,
+                    },
+                    "fact_coverage_count": {
+                        "type": "integer",
+                        "description": "Number of failures where specific facts were missing from answers",
+                    },
+                    "fact_coverage_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Specific patterns of fact coverage failures (1-3 items)",
+                    },
+                    "fact_coverage_severity": {
+                        "type": "integer", "minimum": 1, "maximum": 5,
+                    },
+                    "guardrails_count": {
+                        "type": "integer",
+                        "description": "Number of failures related to safety guardrails or scope boundaries",
+                    },
+                    "guardrails_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Specific patterns of guardrail failures (1-3 items)",
+                    },
+                    "guardrails_severity": {
+                        "type": "integer", "minimum": 1, "maximum": 5,
+                    },
+                    "format_style_count": {
+                        "type": "integer",
+                        "description": "Number of failures related to response format or style issues",
+                    },
+                    "format_style_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Specific patterns of format/style failures (1-3 items)",
+                    },
+                    "format_style_severity": {
+                        "type": "integer", "minimum": 1, "maximum": 5,
+                    },
+                    "suggestion_1": {
+                        "type": "string",
+                        "description": "Highest-priority suggestion for improving the prompt",
+                    },
+                    "suggestion_2": {
+                        "type": "string",
+                        "description": "Second-priority suggestion for improving the prompt",
+                    },
+                    "suggestion_3": {
+                        "type": "string",
+                        "description": "Third-priority suggestion for improving the prompt",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "One-sentence summary of the main failure patterns",
+                    },
+                },
+                "required": [
+                    "instruction_clarity_count", "instruction_clarity_patterns", "instruction_clarity_severity",
+                    "context_utilization_count", "context_utilization_patterns", "context_utilization_severity",
+                    "fact_coverage_count", "fact_coverage_patterns", "fact_coverage_severity",
+                    "guardrails_count", "guardrails_patterns", "guardrails_severity",
+                    "format_style_count", "format_style_patterns", "format_style_severity",
+                    "suggestion_1", "suggestion_2", "suggestion_3", "summary",
+                ],
+            },
+        }
+    ]
+
+    message = client.messages.create(
+        model=MODEL_GENERATE,
+        max_tokens=1024,
+        tools=tools,
+        tool_choice={"type": "tool", "name": "record_analysis"},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "Analyze these RAG prompt evaluation failures and categorize them.\n\n"
+                    f"Current prompt:\n---\n{current_prompt}\n---\n\n"
+                    f"Failures:\n{failure_text}\n\n"
+                    "Categorize each failure into one of these dimensions:\n"
+                    "1. instruction_clarity — prompt instructions are unclear or ambiguous\n"
+                    "2. context_utilization — model fails to properly use the retrieved context\n"
+                    "3. fact_coverage — specific facts are missing from answers\n"
+                    "4. guardrails — scope boundary or safety issues\n"
+                    "5. format_style — response format or style doesn't match expectations\n\n"
+                    "Provide counts, patterns, severity (1-5), and 3 prioritized improvement suggestions."
+                ),
+            },
+        ],
+    )
+
+    inp = message.content[0].input
+
+    categories = {}
+    for cat in ["instruction_clarity", "context_utilization", "fact_coverage", "guardrails", "format_style"]:
+        count = inp.get(f"{cat}_count", 0)
+        if count > 0:
+            categories[cat] = {
+                "count": count,
+                "patterns": inp.get(f"{cat}_patterns", []),
+                "severity": inp.get(f"{cat}_severity", 1),
+            }
+
+    suggestions = [
+        s for s in [
+            inp.get("suggestion_1", ""),
+            inp.get("suggestion_2", ""),
+            inp.get("suggestion_3", ""),
+        ] if s
+    ]
+
+    return {
+        "categories": categories,
+        "suggestions": suggestions,
+        "summary": inp.get("summary", ""),
+    }
+
+
+def _format_structured_feedback(analysis: Dict, raw_failures: List[Dict]) -> str:
+    """Format structured analysis into a clear prompt for the rewriter."""
+    parts = []
+
+    if analysis.get("summary"):
+        parts.append(f"SUMMARY: {analysis['summary']}")
+
+    if analysis.get("categories"):
+        parts.append("\nFAILURE CATEGORIES (by severity):")
+        sorted_cats = sorted(
+            analysis["categories"].items(),
+            key=lambda x: x[1]["severity"],
+            reverse=True,
+        )
+        for cat_name, cat_data in sorted_cats:
+            label = cat_name.replace("_", " ").title()
+            parts.append(f"\n  [{label}] — {cat_data['count']} failures, severity {cat_data['severity']}/5")
+            for pattern in cat_data.get("patterns", []):
+                parts.append(f"    • {pattern}")
+
+    if analysis.get("suggestions"):
+        parts.append("\nPRIORITIZED SUGGESTIONS:")
+        for i, suggestion in enumerate(analysis["suggestions"], 1):
+            parts.append(f"  {i}. {suggestion}")
+
+    # Also include raw failures for specifics
+    if raw_failures:
+        parts.append(f"\nRAW FAILURES ({len(raw_failures)} total):")
+        for fr in raw_failures[:10]:
+            parts.append(f"  - Q: {fr['question']} | Missing: {fr['fact']}")
+
+    return "\n".join(parts)
 
 
 def optimize_prompt_with_claude(prompt: str, feedback: str, score: float) -> str:
@@ -152,12 +359,24 @@ def run_optimization(
             return
 
         if iteration < max_iterations:
+            # Phase 1: Analyze failures
+            yield {"type": "analyzing", "iteration": iteration}
+
+            try:
+                analysis = analyze_failures(failure_reasons, current_prompt)
+            except Exception:
+                analysis = {"categories": {}, "suggestions": [], "summary": "Analysis unavailable."}
+
+            yield {
+                "type": "analysis_complete",
+                "iteration": iteration,
+                "analysis": analysis,
+            }
+
+            # Phase 2: Rewrite prompt using structured feedback
             yield {"type": "optimizing", "iteration": iteration}
 
-            feedback_str = "\n".join(
-                f"- Q: {fr['question']} | Missing fact: {fr['fact']} | Reason: {fr['reason']}"
-                for fr in failure_reasons
-            )
+            feedback_str = _format_structured_feedback(analysis, failure_reasons)
             current_prompt = optimize_prompt_with_claude(current_prompt, feedback_str, score)
 
     # Max retries exceeded

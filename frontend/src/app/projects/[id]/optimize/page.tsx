@@ -6,20 +6,32 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   getProject,
   streamOptimization,
+  streamComparison,
+  getLatestComparison,
   getHistory,
   exportProject,
   type Project,
   type OptimizationRun,
+  type ComparisonSummary,
+  type ComparisonQuestionResult,
 } from "@/lib/api";
 import PromptEditor from "@/components/prompt-editor";
 import ScoreCard from "@/components/score-card";
 import ModelBadge from "@/components/model-badge";
+import ProcessingBanner from "@/components/processing-banner";
+
+interface FailureAnalysis {
+  categories: Record<string, { count: number; patterns: string[]; severity: number }>;
+  suggestions: string[];
+  summary: string;
+}
 
 interface IterationInfo {
   iteration: number;
   score: number | null;
-  status: "evaluating" | "optimizing" | "complete";
+  status: "evaluating" | "analyzing" | "optimizing" | "complete";
   evalProgress?: { current: number; total: number; question?: string; questionScore?: number };
+  analysis?: FailureAnalysis;
 }
 
 export default function OptimizePage() {
@@ -37,24 +49,40 @@ export default function OptimizePage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [history, setHistory] = useState<OptimizationRun[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [comparisonProgress, setComparisonProgress] = useState<{
+    current: number;
+    total: number;
+    phase: string;
+    question?: string;
+  } | null>(null);
+  const [comparisonResult, setComparisonResult] = useState<ComparisonSummary | null>(null);
+  const [showComparisonDetails, setShowComparisonDetails] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const comparisonCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     loadData();
     return () => {
       if (cleanupRef.current) cleanupRef.current();
+      if (comparisonCleanupRef.current) comparisonCleanupRef.current();
     };
   }, [projectId]);
 
   async function loadData() {
     try {
-      const [p, h] = await Promise.all([
+      const [p, h, comp] = await Promise.all([
         getProject(projectId),
         getHistory(projectId),
+        getLatestComparison(projectId).catch(() => ({ comparison: null })),
       ]);
       setProject(p);
       const runs = h.optimization_runs || [];
       setHistory(runs);
+
+      if (comp.comparison) {
+        setComparisonResult(comp.comparison as ComparisonSummary);
+      }
 
       // Restore the latest completed optimization result
       const latestCompleted = runs.find(
@@ -143,6 +171,33 @@ export default function OptimizePage() {
             break;
           }
 
+          case "analyzing": {
+            const iter = event.iteration as number;
+            setIterations((prev) =>
+              prev.map((it) =>
+                it.iteration === iter ? { ...it, status: "analyzing" } : it
+              )
+            );
+            setStatusMessage(
+              `Iteration ${iter} — analyzing failure patterns...`
+            );
+            break;
+          }
+
+          case "analysis_complete": {
+            const iter = event.iteration as number;
+            const analysis = event.analysis as FailureAnalysis;
+            setIterations((prev) =>
+              prev.map((it) =>
+                it.iteration === iter ? { ...it, analysis } : it
+              )
+            );
+            setStatusMessage(
+              `Iteration ${iter} — analysis complete, rewriting prompt...`
+            );
+            break;
+          }
+
           case "optimizing": {
             const iter = event.iteration as number;
             setIterations((prev) =>
@@ -151,7 +206,7 @@ export default function OptimizePage() {
               )
             );
             setStatusMessage(
-              "Claude is analyzing failures and rewriting the prompt..."
+              "Claude is rewriting the prompt based on analysis..."
             );
             break;
           }
@@ -202,6 +257,74 @@ export default function OptimizePage() {
     } finally {
       setExporting(false);
     }
+  }
+
+  function handleCompare() {
+    setComparing(true);
+    setComparisonResult(null);
+    setComparisonProgress(null);
+
+    const cleanup = streamComparison(
+      projectId,
+      (event) => {
+        switch (event.type) {
+          case "comparison_start":
+            setComparisonProgress({
+              current: 0,
+              total: event.total as number,
+              phase: "Starting blind A/B comparison...",
+            });
+            break;
+          case "comparison_generating":
+            setComparisonProgress({
+              current: event.current as number,
+              total: event.total as number,
+              phase: "generating",
+              question: event.question as string,
+            });
+            break;
+          case "comparison_judging":
+            setComparisonProgress({
+              current: event.current as number,
+              total: event.total as number,
+              phase: "judging",
+              question: event.question as string,
+            });
+            break;
+          case "comparison_question_complete":
+            setComparisonProgress({
+              current: event.current as number,
+              total: event.total as number,
+              phase: "complete",
+              question: event.question as string,
+            });
+            break;
+          case "comparison_complete":
+            setComparisonResult({
+              overall_winner: event.overall_winner as "before" | "after" | "tie",
+              after_wins: event.after_wins as number,
+              before_wins: event.before_wins as number,
+              ties: event.ties as number,
+              dimension_averages: event.dimension_averages as Record<string, { before: number; after: number }>,
+              question_results: event.question_results as ComparisonQuestionResult[],
+            });
+            setComparing(false);
+            setComparisonProgress(null);
+            break;
+          case "error":
+            setComparing(false);
+            setComparisonProgress(null);
+            break;
+        }
+      },
+      () => setComparing(false),
+      (err) => {
+        console.error("Comparison stream error:", err);
+        setComparing(false);
+      }
+    );
+
+    comparisonCleanupRef.current = cleanup;
   }
 
   if (loading) {
@@ -416,11 +539,83 @@ export default function OptimizePage() {
                   </div>
                 )}
 
+                {/* Analyzing spinner */}
+                {iter.status === "analyzing" && (
+                  <div className="flex items-center gap-2 text-xs text-purple-400">
+                    <div className="w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                    Analyzing failure patterns...
+                  </div>
+                )}
+
+                {/* Analysis Results */}
+                {iter.analysis && Object.keys(iter.analysis.categories).length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-background rounded-lg p-4 space-y-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg className="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                      <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">
+                        Failure Analysis
+                      </span>
+                    </div>
+
+                    {iter.analysis.summary && (
+                      <p className="text-xs text-muted">{iter.analysis.summary}</p>
+                    )}
+
+                    {/* Categories */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.entries(iter.analysis.categories)
+                        .sort(([, a], [, b]) => b.severity - a.severity)
+                        .map(([cat, data]) => (
+                          <div key={cat} className="bg-card rounded-md p-2.5">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[10px] text-muted capitalize">
+                                {cat.replace(/_/g, " ")}
+                              </span>
+                              <span className={`text-[10px] font-bold ${
+                                data.severity >= 4 ? "text-error" : data.severity >= 3 ? "text-warning" : "text-muted"
+                              }`}>
+                                {data.count} failures
+                              </span>
+                            </div>
+                            {data.patterns.slice(0, 2).map((p, pi) => (
+                              <p key={pi} className="text-[10px] text-muted/70 leading-snug">
+                                • {p}
+                              </p>
+                            ))}
+                          </div>
+                        ))}
+                    </div>
+
+                    {/* Suggestions */}
+                    {iter.analysis.suggestions.length > 0 && (
+                      <div>
+                        <span className="text-[10px] text-muted uppercase tracking-wider font-medium">
+                          Top Suggestions
+                        </span>
+                        <ul className="mt-1 space-y-1">
+                          {iter.analysis.suggestions.map((s, si) => (
+                            <li key={si} className="text-[11px] text-muted/80 flex items-start gap-1.5">
+                              <span className="text-accent font-bold shrink-0">{si + 1}.</span>
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
                 {/* Optimizing spinner */}
                 {iter.status === "optimizing" && (
                   <div className="flex items-center gap-2 text-xs text-accent">
                     <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                    Claude is analyzing failures and rewriting the prompt...
+                    Claude is rewriting the prompt based on analysis...
                   </div>
                 )}
               </motion.div>
@@ -444,28 +639,215 @@ export default function OptimizePage() {
                       ? "Target score reached! Your prompt has been updated."
                       : "Best score achieved after maximum iterations. Your prompt has been updated."}
                   </p>
-                  <motion.button
-                    onClick={handleExport}
-                    disabled={exporting}
-                    className="mt-4 px-6 py-2.5 bg-accent text-white font-medium rounded-[10px] hover:bg-accent-hover transition-all text-sm flex items-center gap-2 disabled:opacity-50"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    {exporting ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        Exporting...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Download Full Package
-                      </>
+                  <div className="mt-4 flex items-center gap-3">
+                    <motion.button
+                      onClick={handleExport}
+                      disabled={exporting}
+                      className="px-6 py-2.5 bg-accent text-white font-medium rounded-[10px] hover:bg-accent-hover transition-all text-sm flex items-center gap-2 disabled:opacity-50"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      {exporting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Exporting...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          Download Full Package
+                        </>
+                      )}
+                    </motion.button>
+
+                    {!running && (
+                      <motion.button
+                        onClick={handleCompare}
+                        disabled={comparing}
+                        className="px-6 py-2.5 bg-card border border-purple-500/30 text-purple-400 font-medium rounded-[10px] hover:bg-purple-500/10 transition-all text-sm flex items-center gap-2 disabled:opacity-50"
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        {comparing ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                            Comparing...
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                            Run Blind A/B Comparison
+                          </>
+                        )}
+                      </motion.button>
                     )}
-                  </motion.button>
+                  </div>
                 </div>
+
+                {/* Comparison Progress */}
+                <AnimatePresence>
+                  {comparing && comparisonProgress && (
+                    <ProcessingBanner
+                      message={
+                        comparisonProgress.phase === "generating"
+                          ? `Generating answers (${comparisonProgress.current}/${comparisonProgress.total})...`
+                          : comparisonProgress.phase === "judging"
+                            ? `Blind judging (${comparisonProgress.current}/${comparisonProgress.total})...`
+                            : `A/B Comparison: Question ${comparisonProgress.current}/${comparisonProgress.total}`
+                      }
+                      detail={comparisonProgress.question || "Setting up blind comparison..."}
+                      variant="generating"
+                    />
+                  )}
+                </AnimatePresence>
+
+                {/* Comparison Results */}
+                {comparisonResult && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-card rounded-[20px] border border-border overflow-hidden"
+                  >
+                    {/* Header */}
+                    <div className="p-6 border-b border-border">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
+                            comparisonResult.overall_winner === "after"
+                              ? "bg-success/20 text-success"
+                              : comparisonResult.overall_winner === "before"
+                                ? "bg-error/20 text-error"
+                                : "bg-warning/20 text-warning"
+                          }`}>
+                            {comparisonResult.overall_winner === "after" ? "✓" : comparisonResult.overall_winner === "before" ? "✗" : "≈"}
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-semibold text-white">
+                              Blind A/B Comparison Result
+                            </h3>
+                            <p className="text-xs text-muted mt-0.5">
+                              {comparisonResult.overall_winner === "after"
+                                ? "Optimized prompt wins! Confirmed improvement."
+                                : comparisonResult.overall_winner === "before"
+                                  ? "Original prompt performed better in blind test."
+                                  : "Prompts performed equally in blind test."}
+                            </p>
+                          </div>
+                        </div>
+                        <ModelBadge model="opus" />
+                      </div>
+
+                      {/* Win/Loss Summary */}
+                      <div className="mt-4 flex items-center gap-6">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted">Optimized wins:</span>
+                          <span className="text-sm font-bold text-success">{comparisonResult.after_wins}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted">Original wins:</span>
+                          <span className="text-sm font-bold text-error">{comparisonResult.before_wins}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted">Ties:</span>
+                          <span className="text-sm font-bold text-warning">{comparisonResult.ties}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dimension Averages */}
+                    <div className="p-6 border-b border-border">
+                      <h4 className="text-xs font-medium text-muted uppercase tracking-wider mb-3">
+                        Dimension Scores (avg, 1–5)
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        {Object.entries(comparisonResult.dimension_averages).map(([dim, scores]) => (
+                          <div key={dim} className="bg-background rounded-lg p-3">
+                            <span className="text-xs text-muted capitalize block mb-1.5">
+                              {dim.replace(/_/g, " ")}
+                            </span>
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-muted/60">Before</span>
+                                <span className={`text-sm font-bold ${scores.before >= scores.after ? "text-warning" : "text-muted/60"}`}>
+                                  {scores.before.toFixed(1)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-muted/60">After</span>
+                                <span className={`text-sm font-bold ${scores.after >= scores.before ? "text-success" : "text-muted/60"}`}>
+                                  {scores.after.toFixed(1)}
+                                </span>
+                              </div>
+                              {scores.after > scores.before && (
+                                <span className="text-[10px] text-success">+{(scores.after - scores.before).toFixed(1)}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Per-question details toggle */}
+                    <div className="p-4">
+                      <button
+                        onClick={() => setShowComparisonDetails(!showComparisonDetails)}
+                        className="w-full flex items-center justify-between text-xs text-muted hover:text-white transition-colors px-2 py-1"
+                      >
+                        <span>{showComparisonDetails ? "Hide" : "Show"} per-question details</span>
+                        <svg
+                          className={`w-4 h-4 transition-transform ${showComparisonDetails ? "rotate-180" : ""}`}
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+
+                      <AnimatePresence>
+                        {showComparisonDetails && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="mt-3 space-y-2 overflow-hidden"
+                          >
+                            {comparisonResult.question_results.map((qr, idx) => (
+                              <div key={idx} className="bg-background rounded-lg p-3 space-y-1.5">
+                                <p className="text-xs text-white font-medium truncate">
+                                  &ldquo;{qr.question}&rdquo;
+                                </p>
+                                <div className="flex items-center gap-3">
+                                  <span className={`text-xs font-bold ${
+                                    qr.real_winner === "after"
+                                      ? "text-success"
+                                      : qr.real_winner === "before"
+                                        ? "text-error"
+                                        : "text-warning"
+                                  }`}>
+                                    {qr.real_winner === "after"
+                                      ? "✓ Optimized wins"
+                                      : qr.real_winner === "before"
+                                        ? "✗ Original wins"
+                                        : "≈ Tie"}
+                                  </span>
+                                  <span className="text-[10px] text-muted/50">
+                                    (blind: {qr.blind_winner})
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-muted/70 leading-relaxed">
+                                  {qr.reasoning}
+                                </p>
+                              </div>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </motion.div>
+                )}
 
                 <div className="bg-card rounded-[20px] p-6 border border-border">
                   <PromptEditor

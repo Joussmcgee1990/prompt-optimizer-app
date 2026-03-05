@@ -152,7 +152,7 @@ def run_evaluation(project_id: str):
 
 
 @router.get("/evaluate/stream")
-async def stream_evaluation(project_id: str):
+async def stream_evaluation(project_id: str, variance_detection: bool = False):
     """Run evaluation with SSE streaming for live progress."""
     project = db.get_project(project_id)
     if not project:
@@ -177,7 +177,10 @@ async def stream_evaluation(project_id: str):
         def _run_sync():
             """Run the blocking evaluation in a thread, push events to queue."""
             try:
-                for event in runner.evaluate_streaming(query_fn, project.prompt_template, items_as_dicts):
+                for event in runner.evaluate_streaming(
+                    query_fn, project.prompt_template, items_as_dicts,
+                    variance_detection=variance_detection,
+                ):
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as e:
                 loop.call_soon_threadsafe(

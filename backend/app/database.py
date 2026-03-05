@@ -67,6 +67,21 @@ def init_db():
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS comparison_runs (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            optimization_run_id TEXT,
+            prompt_before TEXT NOT NULL,
+            prompt_after TEXT NOT NULL,
+            overall_winner TEXT NOT NULL,
+            after_wins INTEGER DEFAULT 0,
+            before_wins INTEGER DEFAULT 0,
+            ties INTEGER DEFAULT 0,
+            dimension_averages TEXT NOT NULL,
+            question_results TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS kb_builds (
             id TEXT PRIMARY KEY,
             project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -426,6 +441,44 @@ def update_kb_file(project_id: str, filename: str, content: str, kb_build_id: Op
     conn.commit()
     conn.close()
     return True
+
+
+# --- Comparison Runs ---
+
+def save_comparison_run(
+    project_id: str, optimization_run_id: str,
+    prompt_before: str, prompt_after: str,
+    overall_winner: str, after_wins: int, before_wins: int, ties: int,
+    dimension_averages: dict, question_results: list,
+) -> str:
+    conn = get_db()
+    run_id = new_id()
+    conn.execute(
+        "INSERT INTO comparison_runs (id, project_id, optimization_run_id, prompt_before, prompt_after, "
+        "overall_winner, after_wins, before_wins, ties, dimension_averages, question_results, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, project_id, optimization_run_id, prompt_before, prompt_after,
+         overall_winner, after_wins, before_wins, ties,
+         json.dumps(dimension_averages), json.dumps(question_results), _now()),
+    )
+    conn.commit()
+    conn.close()
+    return run_id
+
+
+def get_latest_comparison_run(project_id: str) -> dict | None:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM comparison_runs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["dimension_averages"] = json.loads(d["dimension_averages"])
+    d["question_results"] = json.loads(d["question_results"])
+    return d
 
 
 def get_all_kb_file_contents(project_id: str) -> list:
