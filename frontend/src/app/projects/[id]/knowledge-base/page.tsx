@@ -1372,7 +1372,7 @@ export default function KnowledgePage() {
         <div className="flex items-center gap-3">
           {kbFiles.length === 0 && documents.length === 0 && (
             <motion.button
-              onClick={() => router.push(`/projects/${projectId}/evaluate`)}
+              onClick={() => router.push(`/projects/${projectId}/optimize`)}
               className="px-5 py-2.5 bg-card border border-border text-muted font-medium rounded-[10px] hover:border-muted hover:text-white transition-all text-sm"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -1381,12 +1381,12 @@ export default function KnowledgePage() {
             </motion.button>
           )}
           <motion.button
-            onClick={() => router.push(`/projects/${projectId}/evaluate`)}
+            onClick={() => router.push(`/projects/${projectId}/optimize`)}
             className="px-8 py-2.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm flex items-center gap-2"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
           >
-            Continue to Pre-flight
+            Continue to Optimize
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>

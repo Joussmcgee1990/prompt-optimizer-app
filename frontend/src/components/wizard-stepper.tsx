@@ -7,8 +7,7 @@ import { motion } from "framer-motion";
 const steps = [
   { label: "Setup", path: "setup", icon: "01" },
   { label: "Knowledge", path: "knowledge-base", icon: "02" },
-  { label: "Pre-flight", path: "evaluate", icon: "03" },
-  { label: "Optimize", path: "optimize", icon: "04" },
+  { label: "Optimize", path: "optimize", icon: "03" },
 ];
 
 export default function WizardStepper({ projectId }: { projectId: string }) {

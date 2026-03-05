@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { EvalItem } from "@/lib/api";
 
@@ -11,9 +11,32 @@ interface EvalConfigProps {
 }
 
 export default function EvalConfig({ items, onChange, disabled = false }: EvalConfigProps) {
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(
-    items.length > 0 ? 0 : null
+  const [expandedSet, setExpandedSet] = useState<Set<number>>(
+    () => new Set(items.length > 0 ? [0] : [])
   );
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-resize all textareas when items change (e.g., after auto-generate)
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.querySelectorAll("textarea").forEach((ta) => {
+        ta.style.height = "auto";
+        ta.style.height = ta.scrollHeight + "px";
+      });
+    }
+  }, [items]);
+
+  const toggleExpanded = (index: number) => {
+    setExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
 
   const addItem = () => {
     const newItems = [
@@ -21,15 +44,20 @@ export default function EvalConfig({ items, onChange, disabled = false }: EvalCo
       { question: "", required_facts: ["", "", ""] },
     ];
     onChange(newItems);
-    setExpandedIndex(newItems.length - 1);
+    setExpandedSet((prev) => new Set([...prev, newItems.length - 1]));
   };
 
   const removeItem = (index: number) => {
     const newItems = items.filter((_, i) => i !== index);
     onChange(newItems);
-    if (expandedIndex === index) {
-      setExpandedIndex(newItems.length > 0 ? Math.max(0, index - 1) : null);
-    }
+    setExpandedSet((prev) => {
+      const next = new Set(
+        [...prev]
+          .filter((idx) => idx !== index)
+          .map((idx) => (idx > index ? idx - 1 : idx))
+      );
+      return next;
+    });
   };
 
   const updateQuestion = (index: number, question: string) => {
@@ -64,8 +92,22 @@ export default function EvalConfig({ items, onChange, disabled = false }: EvalCo
     onChange(newItems);
   };
 
+  const getFactPreview = (facts: string[]) => {
+    const filled = facts.filter((f) => f.trim());
+    if (filled.length === 0) return "No facts";
+    const first = filled[0].length > 50 ? filled[0].substring(0, 50) + "..." : filled[0];
+    if (filled.length === 1) return first;
+    return `${first} +${filled.length - 1} more`;
+  };
+
+  const handleTextareaResize = (e: React.FormEvent<HTMLTextAreaElement>) => {
+    const target = e.target as HTMLTextAreaElement;
+    target.style.height = "auto";
+    target.style.height = target.scrollHeight + "px";
+  };
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" ref={containerRef}>
       <AnimatePresence>
         {items.map((item, i) => (
           <motion.div
@@ -78,19 +120,21 @@ export default function EvalConfig({ items, onChange, disabled = false }: EvalCo
             {/* Header */}
             <div
               className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-card-lighter transition-colors"
-              onClick={() => setExpandedIndex(expandedIndex === i ? null : i)}
+              onClick={() => toggleExpanded(i)}
             >
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-accent bg-accent/10 px-2 py-1 rounded-md">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <span className="text-xs font-semibold text-accent bg-accent/10 px-2 py-1 rounded-md shrink-0">
                   Q{i + 1}
                 </span>
-                <span className="text-sm text-white">
-                  {item.question || "New question..."}
+                <span className="text-sm font-medium text-white truncate max-w-[400px]">
+                  {item.question || (
+                    <span className="text-muted/50 italic font-normal">New question...</span>
+                  )}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted">
-                  {item.required_facts.filter((f) => f.trim()).length} facts
+              <div className="flex items-center gap-2 shrink-0 ml-3">
+                <span className="text-xs text-muted max-w-[250px] truncate hidden sm:inline">
+                  {getFactPreview(item.required_facts)}
                 </span>
                 {!disabled && (
                   <button
@@ -107,7 +151,7 @@ export default function EvalConfig({ items, onChange, disabled = false }: EvalCo
                 )}
                 <svg
                   className={`w-4 h-4 text-muted transition-transform ${
-                    expandedIndex === i ? "rotate-180" : ""
+                    expandedSet.has(i) ? "rotate-180" : ""
                   }`}
                   fill="none"
                   stroke="currentColor"
@@ -120,7 +164,7 @@ export default function EvalConfig({ items, onChange, disabled = false }: EvalCo
 
             {/* Expanded content */}
             <AnimatePresence>
-              {expandedIndex === i && (
+              {expandedSet.has(i) && (
                 <motion.div
                   initial={{ height: 0 }}
                   animate={{ height: "auto" }}
@@ -150,22 +194,23 @@ export default function EvalConfig({ items, onChange, disabled = false }: EvalCo
                       </label>
                       <div className="space-y-2">
                         {item.required_facts.map((fact, fi) => (
-                          <div key={fi} className="flex items-center gap-2">
-                            <span className="text-xs text-muted w-4 text-right shrink-0">
+                          <div key={fi} className="flex items-start gap-2">
+                            <span className="text-xs text-muted w-4 text-right shrink-0 mt-2.5">
                               {fi + 1}.
                             </span>
-                            <input
-                              type="text"
+                            <textarea
                               value={fact}
                               onChange={(e) => updateFact(i, fi, e.target.value)}
+                              onInput={handleTextareaResize}
                               disabled={disabled}
                               placeholder={`Required fact ${fi + 1}`}
-                              className="flex-1 bg-background border border-border rounded-lg px-4 py-2 text-sm text-white placeholder:text-muted/50 focus:outline-none focus:border-accent transition-colors disabled:opacity-50"
+                              rows={1}
+                              className="flex-1 bg-background border border-border rounded-lg px-4 py-2 text-sm text-white placeholder:text-muted/50 focus:outline-none focus:border-accent transition-colors disabled:opacity-50 resize-none overflow-hidden leading-relaxed"
                             />
                             {!disabled && item.required_facts.length > 1 && (
                               <button
                                 onClick={() => removeFact(i, fi)}
-                                className="text-muted hover:text-error transition-colors p-1 shrink-0"
+                                className="text-muted hover:text-error transition-colors p-1 shrink-0 mt-1.5"
                               >
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />

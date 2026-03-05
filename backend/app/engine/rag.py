@@ -53,8 +53,18 @@ def _get_collection(project_id: str, collection_name: str):
     )
 
 
+_rephrase_cache: dict[str, str] = {}
+
+
 def rephrase_as_query(question: str) -> str:
-    """Use Claude Sonnet to rephrase a question into a concise vector DB query."""
+    """Use Claude Sonnet to rephrase a question into a concise vector DB query.
+
+    Results are cached per question to ensure deterministic RAG retrieval —
+    same question always gets the same search query → same context → consistent scoring.
+    """
+    if question in _rephrase_cache:
+        return _rephrase_cache[question]
+
     from .models import MODEL_GENERATE
     client = _get_anthropic_client()
     message = client.messages.create(
@@ -67,7 +77,9 @@ def rephrase_as_query(question: str) -> str:
             }
         ],
     )
-    return message.content[0].text
+    result = message.content[0].text
+    _rephrase_cache[question] = result
+    return result
 
 
 def query_rag(project_id: str, collection_name: str, prompt_template: str, question: str) -> str:

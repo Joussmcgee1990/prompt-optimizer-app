@@ -10,12 +10,17 @@ import {
   getLatestComparison,
   getHistory,
   exportProject,
+  getEvalItems,
+  saveEvalItems,
+  autoGenerateEvalItems,
   type Project,
   type OptimizationRun,
   type ComparisonSummary,
   type ComparisonQuestionResult,
+  type EvalItem,
 } from "@/lib/api";
 import PromptEditor from "@/components/prompt-editor";
+import EvalConfig from "@/components/eval-config";
 import ScoreCard from "@/components/score-card";
 import ModelBadge from "@/components/model-badge";
 import ProcessingBanner from "@/components/processing-banner";
@@ -58,6 +63,11 @@ export default function OptimizePage() {
   } | null>(null);
   const [comparisonResult, setComparisonResult] = useState<ComparisonSummary | null>(null);
   const [showComparisonDetails, setShowComparisonDetails] = useState(false);
+  const [evalItems, setEvalItems] = useState<EvalItem[]>([]);
+  const [evalSaving, setEvalSaving] = useState(false);
+  const [evalGenerating, setEvalGenerating] = useState(false);
+  const [evalSource, setEvalSource] = useState<string | null>(null);
+  const [criteriaExpanded, setCriteriaExpanded] = useState(true);
   const cleanupRef = useRef<(() => void) | null>(null);
   const comparisonCleanupRef = useRef<(() => void) | null>(null);
 
@@ -71,10 +81,11 @@ export default function OptimizePage() {
 
   async function loadData() {
     try {
-      const [p, h, comp] = await Promise.all([
+      const [p, h, comp, evalData] = await Promise.all([
         getProject(projectId),
         getHistory(projectId),
         getLatestComparison(projectId).catch(() => ({ comparison: null })),
+        getEvalItems(projectId).catch(() => ({ items: [] })),
       ]);
       setProject(p);
       const runs = h.optimization_runs || [];
@@ -82,6 +93,13 @@ export default function OptimizePage() {
 
       if (comp.comparison) {
         setComparisonResult(comp.comparison as ComparisonSummary);
+      }
+
+      // Load eval items — collapse criteria section if items already exist
+      const items = evalData.items || [];
+      setEvalItems(items);
+      if (items.length > 0) {
+        setCriteriaExpanded(false);
       }
 
       // Restore the latest completed optimization result
@@ -99,7 +117,50 @@ export default function OptimizePage() {
     }
   }
 
+  async function handleAutoGenerate() {
+    setEvalGenerating(true);
+    try {
+      const result = await autoGenerateEvalItems(projectId, 5);
+      setEvalItems(result.items);
+      setEvalSource(result.source);
+    } catch (err) {
+      console.error("Failed to auto-generate eval items:", err);
+    } finally {
+      setEvalGenerating(false);
+    }
+  }
+
+  async function handleSaveEvalItems() {
+    // Filter out completely empty items
+    const validItems = evalItems.filter(
+      (item) => item.question.trim() || item.required_facts.some((f) => f.trim())
+    );
+    setEvalSaving(true);
+    try {
+      await saveEvalItems(projectId, validItems);
+      setEvalItems(validItems);
+    } catch (err) {
+      console.error("Failed to save eval items:", err);
+    } finally {
+      setEvalSaving(false);
+    }
+  }
+
   async function handleOptimize() {
+    // Auto-save eval items before starting
+    const validItems = evalItems.filter(
+      (item) => item.question.trim() && item.required_facts.some((f) => f.trim())
+    );
+    if (validItems.length > 0) {
+      try {
+        await saveEvalItems(projectId, validItems);
+        setEvalItems(validItems);
+      } catch (err) {
+        console.error("Failed to save eval items before optimization:", err);
+      }
+    }
+    setCriteriaExpanded(false);
+
     setRunning(true);
     setIterations([]);
     setCurrentIteration(0);
@@ -349,6 +410,125 @@ export default function OptimizePage() {
         </p>
       </div>
 
+      {/* Evaluation Criteria */}
+      <div className="bg-card rounded-[20px] border border-border overflow-hidden">
+        {/* Collapsible header */}
+        <div
+          className="flex items-center justify-between px-6 py-5 cursor-pointer hover:bg-card-lighter transition-colors"
+          onClick={() => setCriteriaExpanded(!criteriaExpanded)}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center">
+              <svg className="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-white">Evaluation Criteria</h2>
+              <p className="text-xs text-muted mt-0.5">
+                {evalItems.length > 0
+                  ? `${evalItems.length} question${evalItems.length !== 1 ? "s" : ""} configured`
+                  : "Define how your prompt will be tested"}
+              </p>
+            </div>
+          </div>
+          <svg
+            className={`w-5 h-5 text-muted transition-transform ${criteriaExpanded ? "rotate-180" : ""}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+
+        {/* Expanded content */}
+        <AnimatePresence>
+          {criteriaExpanded && (
+            <motion.div
+              initial={{ height: 0 }}
+              animate={{ height: "auto" }}
+              exit={{ height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="px-6 pb-6 border-t border-border pt-5 space-y-4">
+                {evalItems.length === 0 && !evalGenerating ? (
+                  /* Empty state — auto-generate banner */
+                  <div className="bg-background rounded-[16px] p-6 text-center space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-accent/10 flex items-center justify-center mx-auto">
+                      <svg className="w-6 h-6 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">No evaluation criteria yet</h3>
+                      <p className="text-xs text-muted mt-1">
+                        Auto-generate questions from your knowledge base, or add them manually.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-3">
+                      <motion.button
+                        onClick={handleAutoGenerate}
+                        className="px-5 py-2 bg-accent text-white font-medium rounded-[10px] hover:bg-accent-hover transition-all text-sm flex items-center gap-2"
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Generate Questions
+                      </motion.button>
+                      <ModelBadge model="sonnet" />
+                    </div>
+                  </div>
+                ) : evalGenerating ? (
+                  /* Generating state */
+                  <ProcessingBanner
+                    message="Generating Evaluation Questions..."
+                    detail="AI is analyzing your knowledge base to create test questions"
+                    variant="generating"
+                  />
+                ) : (
+                  /* Questions exist — show EvalConfig + action buttons */
+                  <>
+                    <EvalConfig items={evalItems} onChange={setEvalItems} disabled={running} />
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <motion.button
+                          onClick={handleAutoGenerate}
+                          disabled={evalGenerating || running}
+                          className="px-4 py-1.5 text-xs text-accent border border-accent/30 rounded-lg hover:bg-accent/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                          whileTap={{ scale: 0.95 }}
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          Regenerate
+                        </motion.button>
+                        <ModelBadge model="sonnet" />
+                      </div>
+                      <motion.button
+                        onClick={handleSaveEvalItems}
+                        disabled={evalSaving || running}
+                        className="px-4 py-1.5 text-xs text-white bg-card border border-border rounded-lg hover:border-muted transition-all disabled:opacity-50 flex items-center gap-1.5"
+                        whileTap={{ scale: 0.95 }}
+                      >
+                        {evalSaving ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          "Save Criteria"
+                        )}
+                      </motion.button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
       {/* Current Prompt */}
       <div className="bg-card rounded-[20px] p-6 border border-border">
         <PromptEditor
@@ -363,7 +543,7 @@ export default function OptimizePage() {
       <div className="flex flex-col items-center gap-2">
         <motion.button
           onClick={handleOptimize}
-          disabled={running}
+          disabled={running || evalItems.filter((item) => item.question.trim() && item.required_facts.some((f) => f.trim())).length === 0}
           className="px-10 py-3.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
@@ -392,6 +572,9 @@ export default function OptimizePage() {
             </>
           )}
         </motion.button>
+        {evalItems.filter((item) => item.question.trim() && item.required_facts.some((f) => f.trim())).length === 0 && !running && (
+          <p className="text-xs text-muted/60">Configure evaluation criteria above to enable optimization</p>
+        )}
         <ModelBadge model="opus" />
       </div>
 
@@ -929,7 +1112,7 @@ export default function OptimizePage() {
       {/* Navigation */}
       <div className="flex items-center justify-between">
         <motion.button
-          onClick={() => router.push(`/projects/${projectId}/evaluate`)}
+          onClick={() => router.push(`/projects/${projectId}/knowledge-base`)}
           className="px-5 py-2.5 bg-card border border-border text-white font-medium rounded-[10px] hover:border-muted transition-all text-sm flex items-center gap-2"
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
@@ -947,7 +1130,7 @@ export default function OptimizePage() {
               d="M15 19l-7-7 7-7"
             />
           </svg>
-          Back to Evaluate
+          Back to Knowledge Base
         </motion.button>
 
         <motion.button
