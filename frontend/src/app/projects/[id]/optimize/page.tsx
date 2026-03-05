@@ -50,6 +50,7 @@ export default function OptimizePage() {
   const [iterations, setIterations] = useState<IterationInfo[]>([]);
   const [currentIteration, setCurrentIteration] = useState(0);
   const [optimizedPrompt, setOptimizedPrompt] = useState<string | null>(null);
+  const [originalPrompt, setOriginalPrompt] = useState<string | null>(null);
   const [finalScore, setFinalScore] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [history, setHistory] = useState<OptimizationRun[]>([]);
@@ -109,6 +110,10 @@ export default function OptimizePage() {
       if (latestCompleted && latestCompleted.final_prompt) {
         setOptimizedPrompt(latestCompleted.final_prompt);
         setFinalScore(latestCompleted.final_score);
+        // Store original prompt from that run for comparison
+        if (latestCompleted.initial_prompt) {
+          setOriginalPrompt(latestCompleted.initial_prompt);
+        }
       }
     } catch (err) {
       console.error("Failed to load:", err);
@@ -160,6 +165,9 @@ export default function OptimizePage() {
       }
     }
     setCriteriaExpanded(false);
+
+    // Capture the original prompt before optimization starts
+    setOriginalPrompt(project?.prompt_template || "");
 
     setRunning(true);
     setIterations([]);
@@ -1046,13 +1054,37 @@ export default function OptimizePage() {
                   </motion.div>
                 )}
 
-                <div className="bg-card rounded-[20px] p-6 border border-border">
-                  <PromptEditor
-                    value={optimizedPrompt}
-                    onChange={() => {}}
-                    disabled
-                    label="Optimized Prompt"
-                  />
+                {/* Side-by-side Prompt Comparison */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Original Prompt */}
+                  <div className="bg-card rounded-[20px] p-6 border border-border relative">
+                    <div className="absolute top-4 right-4">
+                      <span className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-muted/10 text-muted border border-border">
+                        Before
+                      </span>
+                    </div>
+                    <PromptEditor
+                      value={originalPrompt || project?.prompt_template || ""}
+                      onChange={() => {}}
+                      disabled
+                      label="Original Prompt"
+                    />
+                  </div>
+
+                  {/* Optimized Prompt */}
+                  <div className="bg-card rounded-[20px] p-6 border border-accent/30 relative">
+                    <div className="absolute top-4 right-4">
+                      <span className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/30">
+                        After
+                      </span>
+                    </div>
+                    <PromptEditor
+                      value={optimizedPrompt}
+                      onChange={() => {}}
+                      disabled
+                      label="Optimized Prompt"
+                    />
+                  </div>
                 </div>
               </motion.div>
             )}

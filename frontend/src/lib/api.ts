@@ -69,7 +69,7 @@ export interface EvalRun {
 
 export interface OptimizationRun {
   id: string;
-  original_prompt: string;
+  initial_prompt: string;
   final_prompt: string | null;
   final_score: number | null;
   iterations: number;
