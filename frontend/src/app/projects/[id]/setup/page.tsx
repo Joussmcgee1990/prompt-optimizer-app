@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { getProject, updateProject, generatePromptTemplate, type Project } from "@/lib/api";
 import PromptEditor from "@/components/prompt-editor";
 import ModelBadge from "@/components/model-badge";
+import ProcessingBanner from "@/components/processing-banner";
 
 const DEFAULT_PROMPT = `You are a knowledgeable advisor for {company_name}. Your role is to provide accurate, helpful answers based strictly on the provided reference material.
 
@@ -190,6 +191,15 @@ export default function SetupPage() {
             </motion.button>
             <ModelBadge model="sonnet" />
           </div>
+          <AnimatePresence>
+            {generatingPrompt && (
+              <ProcessingBanner
+                message="Generating Prompt Template..."
+                detail="AI is crafting a tailored prompt based on your project description"
+                variant="generating"
+              />
+            )}
+          </AnimatePresence>
           <PromptEditor
             value={promptTemplate}
             onChange={setPromptTemplate}
@@ -198,6 +208,18 @@ export default function SetupPage() {
           />
         </div>
       </div>
+
+      {/* Saving indicator */}
+      <AnimatePresence>
+        {saving && (
+          <ProcessingBanner
+            message="Saving Project..."
+            detail="Updating your project settings"
+            variant="saving"
+            showProgress={false}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Actions */}
       <div className="flex items-center justify-between">
@@ -208,7 +230,7 @@ export default function SetupPage() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >
-          {saved ? "Saved!" : saving ? "Saving..." : "Save"}
+          {saved ? "✓ Saved!" : saving ? "Saving..." : "Save"}
         </motion.button>
 
         <motion.button

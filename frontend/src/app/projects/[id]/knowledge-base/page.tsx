@@ -33,6 +33,7 @@ import {
 import TerminalOutput, { type TerminalLine } from "@/components/terminal-output";
 import FileUpload from "@/components/file-upload";
 import ModelBadge from "@/components/model-badge";
+import ProcessingBanner from "@/components/processing-banner";
 
 type KBPageState = "input" | "building" | "review";
 
@@ -718,30 +719,34 @@ export default function KnowledgePage() {
               rows={14}
               className="w-full bg-card-lighter border border-border rounded-[8px] px-3 py-2 text-sm text-white font-mono placeholder:text-muted focus:outline-none focus:border-accent transition-colors resize-y"
             />
-            <div className="flex items-center justify-end gap-2">
-              <button
-                onClick={() => setEditingGoal(false)}
-                className="px-4 py-2 text-xs text-muted hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-              <motion.button
-                onClick={handleUpdateGoalDefinition}
-                disabled={goalSaving || !goalDraft.trim()}
-                className="px-5 py-2 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                {goalSaving ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  "Save Changes"
-                )}
-              </motion.button>
-            </div>
+            <AnimatePresence>
+              {goalSaving && (
+                <ProcessingBanner
+                  message="Updating Goal Definition..."
+                  detail="Saving your changes"
+                  variant="saving"
+                />
+              )}
+            </AnimatePresence>
+            {!goalSaving && (
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setEditingGoal(false)}
+                  className="px-4 py-2 text-xs text-muted hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <motion.button
+                  onClick={handleUpdateGoalDefinition}
+                  disabled={!goalDraft.trim()}
+                  className="px-5 py-2 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  Save Changes
+                </motion.button>
+              </div>
+            )}
           </div>
         )}
 
@@ -862,24 +867,28 @@ export default function KnowledgePage() {
                   </svg>
                   Add question
                 </button>
-                <div className="flex justify-end">
-                  <motion.button
-                    onClick={handleSaveGoal}
-                    disabled={goalSaving || goalQuestions.length === 0 || goalQuestions.some((q) => !q.question.trim() || !goalAnswers[q.id]?.trim())}
-                    className="px-6 py-2.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    {goalSaving ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      "Save Goal Definition"
-                    )}
-                  </motion.button>
-                </div>
+                <AnimatePresence>
+                  {goalSaving && (
+                    <ProcessingBanner
+                      message="Saving Goal Definition..."
+                      detail="Analyzing your answers and generating a structured goal definition"
+                      variant="saving"
+                    />
+                  )}
+                </AnimatePresence>
+                {!goalSaving && (
+                  <div className="flex justify-end">
+                    <motion.button
+                      onClick={handleSaveGoal}
+                      disabled={goalSaving || goalQuestions.length === 0 || goalQuestions.some((q) => !q.question.trim() || !goalAnswers[q.id]?.trim())}
+                      className="px-6 py-2.5 bg-accent text-white font-semibold rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      Save Goal Definition
+                    </motion.button>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -1108,6 +1117,17 @@ export default function KnowledgePage() {
             </p>
           )}
 
+          {/* Processing banner during generation */}
+          <AnimatePresence>
+            {generatingSystemDocs && (
+              <ProcessingBanner
+                message="Generating System Documents..."
+                detail="Creating rubric, guidelines, and gap analysis from your knowledge base"
+                variant="generating"
+              />
+            )}
+          </AnimatePresence>
+
           {/* Terminal output during generation */}
           {sysDocLines.length > 0 && (
             <TerminalOutput
@@ -1251,6 +1271,15 @@ export default function KnowledgePage() {
               Research
             </motion.button>
           </div>
+          <AnimatePresence>
+            {researching && (
+              <ProcessingBanner
+                message="Researching URL..."
+                detail={`Crawling and synthesizing content from ${researchUrlInput}`}
+                variant="default"
+              />
+            )}
+          </AnimatePresence>
           {researchMessage && (
             <p className={`text-xs ${researchMessage.startsWith("Failed") ? "text-error" : "text-success"}`}>
               {researchMessage}
@@ -1306,23 +1335,23 @@ export default function KnowledgePage() {
       </CollapsibleSection>
 
       {/* ═══════════════ VECTOR DB STATUS ═══════════════ */}
-      {(loadingKB || project?.kb_status === "ready") && (
-        <div className="flex items-center gap-2 px-4 py-2.5 bg-card rounded-[12px] border border-border">
-          {loadingKB ? (
-            <>
-              <div className="w-4 h-4 border-2 border-warning border-t-transparent rounded-full animate-spin shrink-0" />
-              <span className="text-xs text-muted">Indexing into vector database...</span>
-            </>
-          ) : (
-            <>
-              <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              <span className="text-xs text-emerald-300">
-                Vector DB ready ({project?.kb_doc_count} documents indexed)
-              </span>
-            </>
-          )}
+      <AnimatePresence>
+        {loadingKB && (
+          <ProcessingBanner
+            message="Indexing Knowledge Base..."
+            detail="Building vector database for fast retrieval — this may take a moment"
+            variant="indexing"
+          />
+        )}
+      </AnimatePresence>
+      {!loadingKB && project?.kb_status === "ready" && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500/10 rounded-[12px] border border-emerald-500/20">
+          <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="text-xs text-emerald-300">
+            Vector DB ready ({project?.kb_doc_count} documents indexed)
+          </span>
         </div>
       )}
 

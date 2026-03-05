@@ -15,6 +15,7 @@ import {
 import EvalConfig from "@/components/eval-config";
 import ScoreCard from "@/components/score-card";
 import ModelBadge from "@/components/model-badge";
+import ProcessingBanner from "@/components/processing-banner";
 
 interface FactResult {
   fact: string;
@@ -250,36 +251,38 @@ export default function EvaluatePage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3 pl-[52px]">
-            <motion.button
-              onClick={handleAutoGenerate}
-              disabled={generating}
-              className="px-5 py-2.5 bg-accent text-white font-medium rounded-[10px] hover:bg-accent-hover transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              {generating ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  Generate Questions
-                </>
-              )}
-            </motion.button>
-            <motion.button
-              onClick={() => setEvalItems([{ question: "", required_facts: ["", "", ""] }])}
-              className="px-4 py-2.5 text-sm text-muted hover:text-white transition-colors"
-            >
-              or write manually
-            </motion.button>
-            <ModelBadge model="sonnet" />
-          </div>
+          {generating ? (
+            <div className="pl-[52px]">
+              <ProcessingBanner
+                message="Generating Test Questions..."
+                detail={project?.kb_status === "ready"
+                  ? "Analyzing your knowledge base to create questions with verifiable facts"
+                  : "Creating starter questions from your project description"}
+                variant="generating"
+              />
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 pl-[52px]">
+              <motion.button
+                onClick={handleAutoGenerate}
+                className="px-5 py-2.5 bg-accent text-white font-medium rounded-[10px] hover:bg-accent-hover transition-all text-sm flex items-center gap-2"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Generate Questions
+              </motion.button>
+              <motion.button
+                onClick={() => setEvalItems([{ question: "", required_facts: ["", "", ""] }])}
+                className="px-4 py-2.5 text-sm text-muted hover:text-white transition-colors"
+              >
+                or write manually
+              </motion.button>
+              <ModelBadge model="sonnet" />
+            </div>
+          )}
         </motion.div>
       )}
 
