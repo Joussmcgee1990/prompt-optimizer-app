@@ -4,6 +4,41 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 
+function VideoUnmuteButton() {
+  const [muted, setMuted] = useState(true);
+  const toggle = () => {
+    setMuted((m) => !m);
+  };
+
+  return (
+    <>
+      <button
+        onClick={(e) => {
+          const container = e.currentTarget.parentElement;
+          const video = container?.querySelector("video");
+          if (video) {
+            video.muted = !video.muted;
+            setMuted(video.muted);
+          }
+        }}
+        className="absolute bottom-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/80 transition-colors border border-white/10"
+        aria-label={muted ? "Unmute" : "Mute"}
+      >
+        {muted ? (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+        )}
+      </button>
+    </>
+  );
+}
+
 const features = [
   {
     step: "01",
@@ -84,19 +119,19 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="pt-32 pb-20 px-6">
+      <section className="pt-24 md:pt-32 pb-12 md:pb-20 px-6">
         <div className="max-w-4xl mx-auto text-center">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <h1 className="font-[family-name:var(--font-markazi)] text-6xl md:text-7xl font-bold text-white leading-tight tracking-tight">
+            <h1 className="font-[family-name:var(--font-markazi)] text-5xl md:text-7xl font-bold text-white leading-tight tracking-tight">
               Take Your Prompts
               <br />
               <span className="text-accent">Higher, Faster</span>
             </h1>
-            <p className="mt-6 text-lg text-muted max-w-2xl mx-auto leading-relaxed">
+            <p className="mt-4 md:mt-6 text-base md:text-lg text-muted max-w-2xl mx-auto leading-relaxed">
               Stop guessing if your RAG prompts work. Upload your knowledge base,
               define what matters, and let AI auto-optimize your prompts to peak
               performance.
@@ -104,7 +139,7 @@ export default function LandingPage() {
           </motion.div>
 
           <motion.div
-            className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4"
+            className="mt-6 md:mt-10 flex flex-col sm:flex-row items-center justify-center gap-4"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.3 }}
@@ -121,6 +156,77 @@ export default function LandingPage() {
             >
               How It Works
             </a>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Video Before/After */}
+      <section className="py-12 md:py-20 px-6">
+        <div className="max-w-5xl mx-auto">
+          <motion.div
+            className="text-center mb-10"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <h2 className="font-[family-name:var(--font-markazi)] text-4xl md:text-5xl font-bold text-white mb-3">
+              Hone Your Prompts &amp; Skills
+            </h2>
+            <p className="text-muted text-base">
+              Go from amateur to professional output
+            </p>
+          </motion.div>
+
+          <motion.div
+            className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 items-start"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+          >
+            {/* Before */}
+            <div className="flex flex-col items-center gap-3">
+              <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-semibold tracking-wide">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                BEFORE
+              </span>
+              <div className="relative w-full max-w-[280px] aspect-[9/16] rounded-[20px] overflow-hidden border-2 border-red-500/20 bg-black group">
+                <video
+                  src="/videos/before.mp4"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className="w-full h-full object-cover"
+                />
+                <VideoUnmuteButton />
+              </div>
+            </div>
+
+            {/* After */}
+            <div className="flex flex-col items-center gap-3">
+              <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-sm font-semibold tracking-wide">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                AFTER
+              </span>
+              <div className="relative w-full max-w-[280px] aspect-[9/16] rounded-[20px] overflow-hidden border-2 border-green-500/20 bg-black group">
+                <video
+                  src="/videos/after.mp4"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className="w-full h-full object-cover"
+                />
+                <VideoUnmuteButton />
+              </div>
+            </div>
           </motion.div>
         </div>
       </section>
@@ -162,6 +268,52 @@ export default function LandingPage() {
                   {f.title}
                 </h3>
                 <p className="text-sm text-muted leading-relaxed">{f.desc}</p>
+              </motion.div>
+            ))}
+          </motion.div>
+        </div>
+      </section>
+
+      {/* What Will You Build? */}
+      <section className="py-20 px-6">
+        <div className="max-w-5xl mx-auto">
+          <motion.div
+            className="text-center mb-12"
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+          >
+            <h2 className="font-[family-name:var(--font-markazi)] text-4xl font-bold text-white mb-3">
+              What Will You Build?
+            </h2>
+            <p className="text-muted text-sm">
+              Teams use prompt optimization for all kinds of AI skills
+            </p>
+          </motion.div>
+
+          <motion.div
+            className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"
+            variants={container}
+            initial="hidden"
+            whileInView="show"
+            viewport={{ once: true }}
+          >
+            {[
+              { emoji: "🎧", title: "Customer Support", desc: "Answer product questions, handle returns, and troubleshoot issues from your help docs" },
+              { emoji: "📚", title: "Documentation Q&A", desc: "Help users find answers across your guides, tutorials, and API references" },
+              { emoji: "⚖️", title: "Legal Review", desc: "Extract key clauses, summarize contracts, and flag risks from legal documents" },
+              { emoji: "💰", title: "Sales Enablement", desc: "Arm your team with product specs, pricing details, and competitive intel" },
+              { emoji: "🏢", title: "Internal Wiki", desc: "Search company policies, HR documents, and onboarding materials instantly" },
+              { emoji: "🔧", title: "Technical Support", desc: "Debug issues using runbooks, architecture docs, and past incident reports" },
+            ].map((ex) => (
+              <motion.div
+                key={ex.title}
+                variants={item}
+                className="bg-card rounded-2xl p-6 border border-border"
+              >
+                <span className="text-2xl mb-3 block">{ex.emoji}</span>
+                <h3 className="text-sm font-semibold text-white mb-1">{ex.title}</h3>
+                <p className="text-xs text-muted leading-relaxed">{ex.desc}</p>
               </motion.div>
             ))}
           </motion.div>
