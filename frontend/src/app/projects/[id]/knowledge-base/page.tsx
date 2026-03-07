@@ -1482,10 +1482,10 @@ export default function KnowledgePage() {
       )}
 
       {/* Spacer for floating mobile bar */}
-      <div className="h-28 md:hidden" />
+      <div className="h-40 md:hidden" />
 
-      {/* ═══════════════ NAVIGATION — floating bar on mobile (sits above browser chrome) ═══════════════ */}
-      <div className="fixed bottom-[4.5rem] left-3 right-3 z-40 bg-[#161b22] border border-accent/40 rounded-2xl px-5 py-3 shadow-[0_4px_30px_rgba(0,130,243,0.25)] md:static md:bg-transparent md:border-0 md:rounded-none md:px-0 md:py-0 md:shadow-none md:bottom-auto md:left-auto md:right-auto">
+      {/* ═══════════════ NAVIGATION — floating bar on mobile (sits well above browser chrome) ═══════════════ */}
+      <div className="fixed bottom-36 left-3 right-3 z-40 bg-[#161b22] border border-accent/40 rounded-2xl px-5 py-3 shadow-[0_4px_30px_rgba(0,130,243,0.25)] md:static md:bg-transparent md:border-0 md:rounded-none md:px-0 md:py-0 md:shadow-none md:bottom-auto md:left-auto md:right-auto">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <motion.button
             onClick={() => router.push(`/projects/${projectId}/setup`)}
