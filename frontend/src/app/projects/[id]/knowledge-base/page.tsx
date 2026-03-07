@@ -1482,10 +1482,10 @@ export default function KnowledgePage() {
       )}
 
       {/* Spacer for sticky mobile bar */}
-      <div className="h-28 md:hidden" />
+      <div className="h-32 md:hidden" />
 
-      {/* ═══════════════ NAVIGATION — sticky on mobile ═══════════════ */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0d1117] border-t-[3px] border-accent px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(0,130,243,0.15)] md:static md:bg-transparent md:border-t-0 md:border-0 md:px-0 md:py-0 md:shadow-none">
+      {/* ═══════════════ NAVIGATION — sticky on mobile, pb-20 clears Chrome/Safari bottom toolbar ═══════════════ */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0d1117] border-t-[3px] border-accent px-6 pt-3 pb-20 shadow-[0_-8px_30px_rgba(0,130,243,0.15)] md:static md:bg-transparent md:border-t-0 md:border-0 md:px-0 md:py-0 md:shadow-none">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <motion.button
             onClick={() => router.push(`/projects/${projectId}/setup`)}
