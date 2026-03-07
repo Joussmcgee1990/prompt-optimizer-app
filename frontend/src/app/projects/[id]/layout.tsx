@@ -44,7 +44,7 @@ export default function ProjectLayout({
         </div>
       </nav>
 
-      <div className="pt-24 pb-12 px-6 max-w-4xl mx-auto">
+      <div className="pt-20 md:pt-24 pb-12 px-4 md:px-6 max-w-4xl mx-auto">
         <WizardStepper projectId={projectId} />
         {children}
       </div>

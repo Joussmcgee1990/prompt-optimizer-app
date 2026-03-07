@@ -69,6 +69,8 @@ export default function OptimizePage() {
   const [evalGenerating, setEvalGenerating] = useState(false);
   const [evalSource, setEvalSource] = useState<string | null>(null);
   const [criteriaExpanded, setCriteriaExpanded] = useState(true);
+  const [showGuide, setShowGuide] = useState(false);
+  const [showExportGuide, setShowExportGuide] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
   const comparisonCleanupRef = useRef<(() => void) | null>(null);
 
@@ -321,6 +323,7 @@ export default function OptimizePage() {
     setExporting(true);
     try {
       await exportProject(projectId);
+      setShowExportGuide(true);
     } catch (err) {
       console.error("Export failed:", err);
     } finally {
@@ -1078,6 +1081,87 @@ export default function OptimizePage() {
                     />
                   </div>
                 </div>
+
+                {/* How to Use Your Optimized Prompt */}
+                <div className="bg-card rounded-[20px] border border-border overflow-hidden">
+                  <button
+                    onClick={() => setShowGuide(!showGuide)}
+                    className="w-full flex items-center justify-between p-6 text-left hover:bg-card-lighter/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center">
+                        <svg className="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <span className="text-sm font-semibold text-white">How to Use Your Optimized Prompt</span>
+                    </div>
+                    <svg
+                      className={`w-5 h-5 text-muted transition-transform duration-300 ${showGuide ? "rotate-180" : ""}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  <AnimatePresence>
+                    {showGuide && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="px-6 pb-6 space-y-5">
+                          <div className="h-px bg-border" />
+
+                          {/* Step 1 */}
+                          <div className="flex gap-4">
+                            <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                              1
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-semibold text-white mb-1">Download &amp; Unzip</h4>
+                              <p className="text-xs text-muted leading-relaxed">
+                                Click &ldquo;Download Full Package&rdquo; above to get your prompt and knowledge files as a ZIP. Unzip it to a folder on your machine.
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Step 2 */}
+                          <div className="flex gap-4">
+                            <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                              2
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-semibold text-white mb-1">Link to Claude</h4>
+                              <p className="text-xs text-muted leading-relaxed">
+                                Open Claude Code or Claude Desktop and add the unzipped folder as a project. This gives Claude access to your knowledge base files and optimized prompt.
+                              </p>
+                              <div className="mt-2 bg-background rounded-lg px-3 py-2 text-xs text-muted font-mono">
+                                claude → Settings → Project → point to folder
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Step 3 */}
+                          <div className="flex gap-4">
+                            <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                              3
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-semibold text-white mb-1">Start Using It</h4>
+                              <p className="text-xs text-muted leading-relaxed">
+                                Open <code className="text-accent bg-accent/10 px-1 py-0.5 rounded text-[11px]">prompt.txt</code> to see your optimized system prompt. Claude will use the knowledge base files in the folder to answer questions with RAG-quality accuracy.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </motion.div>
             )}
           </motion.div>
@@ -1151,7 +1235,7 @@ export default function OptimizePage() {
       <div className="h-20 md:hidden" />
 
       {/* Navigation — sticky on mobile */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-background/90 backdrop-blur-lg border-t border-border px-6 py-3 md:static md:bg-transparent md:backdrop-blur-none md:border-0 md:px-0 md:py-0">
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0d1117] border-t-[3px] border-accent px-6 py-4 shadow-[0_-8px_30px_rgba(0,130,243,0.15)] md:static md:bg-transparent md:border-t-0 md:border-0 md:px-0 md:py-0 md:shadow-none">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <motion.button
             onClick={() => router.push(`/projects/${projectId}/knowledge-base`)}
@@ -1186,6 +1270,107 @@ export default function OptimizePage() {
           </motion.button>
         </div>
       </div>
+      {/* Export Guide Modal */}
+      <AnimatePresence>
+        {showExportGuide && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowExportGuide(false)}
+          >
+            <motion.div
+              className="bg-card rounded-[20px] p-8 w-full max-w-lg border border-border mx-4"
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-full bg-green-500/15 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Package Downloaded!</h2>
+                  <p className="text-sm text-muted">Here&apos;s how to use it with Claude</p>
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                {/* Step 1 */}
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                    1
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-white mb-1">Create a Claude Project</h4>
+                    <p className="text-xs text-muted leading-relaxed">
+                      Open <a href="https://claude.ai" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">claude.ai</a> and create a new Project. Give it a name that matches this skill.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 2 */}
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                    2
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-white mb-1">Upload All Files</h4>
+                    <p className="text-xs text-muted leading-relaxed">
+                      Unzip the downloaded package and upload <strong className="text-white">every file</strong> into your Claude project&apos;s knowledge base. This includes your knowledge docs and the optimized prompt.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 3 */}
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                    3
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-white mb-1">Copy the Prompt into Instructions</h4>
+                    <p className="text-xs text-muted leading-relaxed">
+                      Open <code className="text-accent bg-accent/10 px-1.5 py-0.5 rounded text-[11px]">prompt.txt</code> from the package and copy the full prompt into the <strong className="text-white">Custom Instructions</strong> section of your Claude project. This tells Claude exactly how to use the knowledge base.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 4 */}
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-white mb-1">Play!</h4>
+                    <p className="text-xs text-muted leading-relaxed">
+                      You&apos;re all set. Start chatting in your Claude project and it will use your optimized prompt with the full knowledge base to deliver expert-level answers.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Close button */}
+              <div className="mt-7 flex justify-end">
+                <motion.button
+                  onClick={() => setShowExportGuide(false)}
+                  className="px-6 py-2.5 bg-accent text-white font-medium rounded-[10px] hover:bg-accent-hover transition-all text-sm"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  Got it!
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

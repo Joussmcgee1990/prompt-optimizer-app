@@ -15,7 +15,7 @@ export default function WizardStepper({ projectId }: { projectId: string }) {
   const currentStep = steps.findIndex((s) => pathname.includes(s.path));
 
   return (
-    <div className="w-full mb-10">
+    <div className="w-full mb-6 md:mb-10">
       <div className="flex items-center justify-between max-w-3xl mx-auto">
         {steps.map((step, i) => {
           const isActive = i === currentStep;
@@ -27,7 +27,7 @@ export default function WizardStepper({ projectId }: { projectId: string }) {
               <Link href={href} className="flex flex-col items-center gap-2 group">
                 <motion.div
                   className={`
-                    w-12 h-12 rounded-full flex items-center justify-center text-sm font-semibold
+                    w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center text-xs md:text-sm font-semibold
                     transition-all duration-300 border-2
                     ${isActive
                       ? "bg-accent border-accent text-white"
