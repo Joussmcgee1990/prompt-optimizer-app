@@ -14,6 +14,14 @@ const markazi = Markazi_Text({
   weight: ["400", "500", "600", "700"],
 });
 
+import type { Viewport } from "next";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export const metadata: Metadata = {
   title: "Prompt Builder & Optimizer | VYZN",
   description: "Auto-tune your RAG prompts with AI-powered evaluation and optimization",
